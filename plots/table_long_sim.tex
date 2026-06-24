@@ -1,0 +1,33 @@
+\begin{table*}[t]
+\centering\small
+\caption{Long Simulation Results (1440 steps, Alibaba Cluster Trace 2018). SLA threshold: P90 latency $<$200\,ms.}
+\label{tab:long_sim}
+\begin{tabular}{llrrrrrrrr}
+\toprule
+Model & Variant & Replicas & Lat P90 & P99 & CPU\% & SLA\% & vCPU-min & Scales & Tokens \\
+\midrule
+Llama 3.1 8B & Zero-Shot & 19.0 & 10.7 & 39 & 29 & \textbf{100.0} & 13668 & 15 & 298685 \\
+Llama 3.1 8B & Domain & 19.7 & 10.3 & 32 & 27 & \textbf{100.0} & 14179 & 12 & 494525 \\
+Llama 3.1 8B & History-5 & 19.0 & 10.9 & 40 & 28 & \textbf{99.9} & 13826 & 315 & 557526 \\
+Llama 3.1 8B & Chain-of-Thought & 18.9 & 11.7 & 56 & 29 & \textbf{99.8} & 13610 & 13 & 385088 \\
+\midrule
+Llama 3.3 70B & Zero-Shot & 11.6 & 16.1 & 87 & 45 & \textbf{99.7} & 8326 & 12 & 294448 \\
+Llama 3.3 70B & Domain & 11.7 & 14.4 & 60 & 46 & \textbf{100.0} & 6836 & 64 & 491153 \\
+\midrule
+Mistral Small 4 & Zero-Shot & 15.2 & 13.7 & 70 & 35 & \textbf{99.8} & 10918 & 12 & 298037 \\
+Mistral Small 4 & Domain & 16.5 & 11.1 & 34 & 32 & \textbf{100.0} & 11860 & 19 & 519633 \\
+Mistral Small 4 & History-5 & 10.4 & 15.1 & 53 & 49 & \textbf{99.9} & 7662 & 381 & 575342 \\
+Mistral Small 4 & Chain-of-Thought & 12.9 & 17.0 & 98 & 44 & \textbf{99.8} & 9312 & 25 & 394728 \\
+\midrule
+Qwen 3 80B & Zero-Shot & 10.9 & 24.7 & 187 & 52 & 99.1 & 7869 & 125 & 287024 \\
+Qwen 3 80B & Domain & 10.9 & 15.4 & 87 & 48 & \textbf{99.9} & 7930 & 85 & 507722 \\
+Qwen 3 80B & History-5 & 6.9 & 43.3 & 396 & 68 & 95.9 & 5552 & 1118 & 561288 \\
+Qwen 3 80B & Chain-of-Thought & 12.3 & 16.4 & 95 & 45 & \textbf{99.6} & 8873 & 19 & 387685 \\
+\midrule
+DQN (RL) & — & 11.4 & 36.1 & 439 & 48 & 95.9 & 8198 & 819 & — \\
+HPA & — & 10.5 & 14.2 & 31 & 48 & \textbf{100.0} & 7802 & 711 & — \\
+KEDA & — & 5.6 & 125.8 & 436 & 90 & 80.8 & 4156 & 428 & — \\
+PPO (RL) & — & 8.0 & 45.7 & 469 & 65 & 96.0 & 6418 & 1292 & — \\
+\bottomrule
+\end{tabular}
+\end{table*}

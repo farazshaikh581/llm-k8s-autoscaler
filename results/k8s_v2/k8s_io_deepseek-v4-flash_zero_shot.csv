@@ -1,0 +1,8 @@
+step,timestamp,replicas,ready_replicas,cpu_millicores,memory_mib,rps_target,latency_p90_ms,success_rate,llm_decision,scale_event,llm_model,llm_variant,llm_tokens,llm_latency_ms,workload_type
+0,2026-06-22 16:14:15,3,3,14,206,1437,14.4,1.0,3,0,deepseek-v4-flash,zero_shot,179,1034.0,I/O-bound
+1,2026-06-22 20:30:57,3,3,3,238,1535,19.1,1.0,3,0,deepseek-v4-flash,zero_shot,179,707.1,I/O-bound
+2,2026-06-22 20:31:58,3,3,3,238,1031,35.9,1.0,3,0,deepseek-v4-flash,zero_shot,179,673.2,I/O-bound
+3,2026-06-22 20:32:59,3,3,3,238,1088,36.1,1.0,3,0,deepseek-v4-flash,zero_shot,179,1385.8,I/O-bound
+4,2026-06-22 20:34:01,3,3,3,238,1214,36.0,1.0,3,0,deepseek-v4-flash,zero_shot,179,639.2,I/O-bound
+5,2026-06-23 20:37:54,3,3,3,238,295,36.3,1.0,3,0,deepseek-v4-flash,zero_shot,178,637.3,I/O-bound
+6,2026-06-23 20:38:55,3,3,3,238,1494,35.8,1.0,3,0,deepseek-v4-flash,zero_shot,179,3366.9,I/O-bound

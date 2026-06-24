@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets — NEVER commit these
+api_keys.conf
+groq_keys.txt
+*.pem
+*.key
+
+# Large data files
+machine_usage.csv
+machine_usage.tar.gz
+*.qcow2
+*.iso
+*.img
+
+# Logs
+logs/
+*.log
+
+# Jupyter
+.ipynb_checkpoints/

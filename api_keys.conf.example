@@ -1,0 +1,21 @@
+# API keys — one per line, format: provider:key
+# Each key becomes a parallel worker with its own independent quota.
+#
+# Supported providers:
+#   groq       — Llama 4 Scout, Llama 8B (console.groq.com)
+#   sambanova  — Llama 70B (cloud.sambanova.ai)
+#   cerebras   — GPT-OSS 120B (cloud.cerebras.ai)
+#   nvidia     — Llama 8B, Llama 70B, Mistral Small 4, Qwen 80B (build.nvidia.com)
+#   google     — Gemini Flash (aistudio.google.com)
+#
+# Sign up at each provider, grab the API key, add a line below.
+# More keys = more parallelism = faster completion.
+#
+# Copy this file to api_keys.conf and fill in your keys:
+#   cp api_keys.conf.example api_keys.conf
+
+groq:gsk_YOUR_KEY_HERE
+nvidia:nvapi-YOUR_KEY_HERE
+sambanova:YOUR_KEY_HERE
+cerebras:csk-YOUR_KEY_HERE
+google:YOUR_KEY_HERE
