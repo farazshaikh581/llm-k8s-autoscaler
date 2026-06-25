@@ -7,8 +7,8 @@ set -e
 export PYTHONUNBUFFERED=1
 export GROQ_API_KEY='gsk_YOUR_GROQ_API_KEY'
 
-PYTHON=/users/ffarazug/gym-sfu/venv/bin/python
-DIR=/users/ffarazug/gym-sfu/llm_autoscaler
+PYTHON=path
+DIR=path
 OUTDIR=$DIR/results_k8s
 LOG=$DIR/logs/k8s_experiment.log
 NTFY_TOPIC="YOUR_NTFY_TOPIC"
