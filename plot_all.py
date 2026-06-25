@@ -33,9 +33,9 @@ import pandas as pd
 # ─── Config ──────────────────────────────────────────────────────────────────
 
 BASE = Path(__file__).parent
-LONG_DIR = BASE / "results" / "long_sim"
-K8S_DIR = BASE / "results" / "k8s_v2"
-TRACE_FILE = BASE / "traces" / "trace_alibaba_v2.npy"
+LONG_DIR = BASE / "results_long"
+K8S_DIR = BASE / "results_k8s_v2"
+TRACE_FILE = BASE / "trace_alibaba_v2.npy"
 TRACE_CPU = BASE / "traces" / "trace_cpu.npy"
 TRACE_IO = BASE / "traces" / "trace_io.npy"
 PLOTS_DIR = BASE / "plots"
