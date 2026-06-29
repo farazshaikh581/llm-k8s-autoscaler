@@ -148,7 +148,7 @@ python plot_all.py              # standard quality
 python plot_all.py --dpi 300    # publication quality
 ```
 
-This generates 15 plots, 3 LaTeX tables, and 2 summary CSVs in the `plots/` directory.
+This generates 17 plots, 3 LaTeX tables, and 2 summary CSVs in the `plots/` directory.
 
 ## Plots
 
@@ -156,19 +156,21 @@ This generates 15 plots, 3 LaTeX tables, and 2 summary CSVs in the `plots/` dire
 |---|------|-------------|
 | 01 | Workload Traces | Alibaba trace characterization (combined, CPU, IO) |
 | 02 | Summary Bars | SLA / Cost / Stability per model and variant |
-| 03 | Time-Series | Replicas + latency + CPU over 1440 steps |
+| 03 | Time-Series | LLMs vs baselines in split panels over 1440 steps |
 | 04 | Ablation Heatmap | 6 metrics across all models and prompt variants |
 | 05 | Model Size Scaling | Performance vs parameter count (8B-120B) |
 | 06 | Cost-SLA Pareto | Cost-efficiency frontier |
 | 07 | K8s Summary | CPU vs IO workload bars |
-| 08 | Workload Comparison | CPU vs IO scatter plot |
-| 09 | K8s Time-Series | Real cluster replicas + latency + CPU |
+| 08 | Workload Comparison | CPU vs IO scatter plot with per-point labels |
+| 09 | K8s Time-Series | Real cluster LLMs vs baselines in split panels |
 | 10 | LLM Overhead | Token usage and inference latency |
-| 11 | Sim vs Real | Simulation fidelity analysis |
+| 11 | Sim vs Real | Simulation fidelity scatter with labeled points |
 | 12 | Radar Profiles | Multi-dimensional model comparison |
 | 13 | Variant Time-Series | Prompt variant effect on scaling behavior |
 | 14 | Workload Difficulty | CPU (hard) vs IO (easy) ranking |
 | 15 | Latency Distributions | Box plots by model and variant |
+| 16 | Inference Latency | Decision latency across all autoscaling approaches |
+| 17 | Inference Feasibility | Feasibility ratio across decision intervals (1s-60s) |
 
 ## Infrastructure
 
