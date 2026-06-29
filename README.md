@@ -1,14 +1,14 @@
-# LLM as Zero-Shot Kubernetes Autoscaler
+# From Training to Reasoning: LLMs as Closed-Loop Controllers for Cloud Autoscaling
 
-A multi-model empirical study evaluating large language models as zero-shot autoscalers for Kubernetes workloads, benchmarked against traditional autoscalers (HPA, KEDA) and reinforcement learning baselines (DQN, PPO).
+A multi-model empirical study evaluating large language models as closed-loop autoscalers for Kubernetes workloads, benchmarked against traditional autoscalers (HPA, KEDA) and reinforcement learning baselines (DQN, PPO).
 
 ## Overview
 
 This repository contains the code, data, and results for the paper:
 
-> **LLM as Zero-Shot Kubernetes Autoscaler: A Multi-Model Empirical Study**
+> **From Training to Reasoning: LLMs as Closed-Loop Controllers for Cloud Autoscaling**
 
-We evaluate whether LLMs can make real-time scaling decisions for containerized workloads without any training, using only natural language prompts describing the current system state. The study covers:
+We evaluate whether LLMs can make real-time scaling decisions for containerized workloads without any task-specific training, using only natural language prompts describing the current system state. The study covers:
 
 - **4 core LLMs**: Llama 3.1 8B, Llama 3.3 70B, Mistral Small 4 (119B), Qwen 3 80B
 - **2 supplementary LLMs**: GPT-OSS 120B, Llama 4 Scout (17B)
