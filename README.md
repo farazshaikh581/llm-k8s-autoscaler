@@ -191,7 +191,21 @@ This generates 15 plots, 3 LaTeX tables, and 2 summary CSVs in the `plots/` dire
 | Groq (console.groq.com) | Llama 4 Scout | Rate-limited |
 | Cerebras (cloud.cerebras.ai) | GPT-OSS 120B | Simulation only |
 
-## Data
+## Workload Traces
+
+The workload traces are derived from the [Alibaba Cluster Trace 2018](https://github.com/alibaba/clusterdata/tree/master/cluster-trace-v2018), specifically the `machine_usage` table (~1.3 million machines over 8 days). The original dataset is described in:
+
+> Q. Liu, Z. Yu. **The Elasticity and Plasticity in Semi-Containerized Co-locating Cloud Workload: a View from Alibaba Trace.** *ACM SoCC 2018.* DOI: [10.1145/3267809.3267830](https://doi.org/10.1145/3267809.3267830)
+
+**Extraction process** (`extract_workload_traces.py`):
+1. Load 20M rows from `machine_usage.csv` (columns: `machine_id`, `time_stamp`, `cpu_util`, `mem_util`, `disk_io`)
+2. Classify machines into CPU-intensive, memory-intensive, and I/O-intensive types using k-means clustering on per-machine resource usage statistics (mean and std of CPU, memory, and disk I/O)
+3. For each machine type, aggregate utilization into 1440 one-minute bins (24 hours) and convert to RPS using a linear scaling factor
+4. Output: `trace_cpu.npy` (RPS 200–2199), `trace_io.npy` (RPS 100–3351), `trace_alibaba_v2.npy` (combined, RPS 499–3866)
+
+The raw `machine_usage.csv` is not included in this repository due to size (~30 GB compressed). Download it from the [Alibaba cluster-trace-v2018 repository](https://github.com/alibaba/clusterdata/tree/master/cluster-trace-v2018).
+
+## Experiment Results
 
 All experiment results are stored as CSV files in the `results/` directory. Each row represents one autoscaling decision step with columns for:
 
