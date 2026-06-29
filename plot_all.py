@@ -1192,105 +1192,103 @@ def generate_latex_tables(ls, ks):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# PLOT 18: Cost-Benefit Analysis — Inference Cost vs Infrastructure Savings
+# PLOT 18: Infrastructure Cost Comparison (vCPU-minutes)
 # ═══════════════════════════════════════════════════════════════════════════
 
-VCPU_COST_PER_MIN = 0.05 / 60  # $0.05/vCPU-hour → $/vCPU-min
-TOKEN_COST_PER_M = {
-    "llama-8b": 0.10, "llama-70b": 0.80, "mistral-small4": 0.15,
-    "qwen3-80b": 1.00, "gpt-oss-120b": 2.00, "llama4-scout": 0.25,
-}
-
 def plot_cost_benefit(ls, dpi):
-    hpa_cost = ls[ls["llm_model"] == "hpa"]["total_vcpu"].values[0]
+    baselines = ls[ls["llm_model"].isin(BASELINES_LONG)].copy()
+    hpa_vcpu = baselines[baselines["llm_model"] == "hpa"]["total_vcpu"].values[0]
 
-    core_plus = CORE_MODELS + SUPPLEMENTARY
-    llm = ls[ls["llm_model"].isin(core_plus)].copy()
+    all_models = CORE_MODELS + SUPPLEMENTARY
+    llm = ls[ls["llm_model"].isin(all_models)].copy()
     if llm.empty:
         return
 
-    llm["infra_cost_usd"] = llm["total_vcpu"] * VCPU_COST_PER_MIN
-    llm["inference_cost_usd"] = llm.apply(
-        lambda r: r["total_tokens"] / 1e6 * TOKEN_COST_PER_M.get(r["llm_model"], 1.0), axis=1)
-    llm["total_cost_usd"] = llm["infra_cost_usd"] + llm["inference_cost_usd"]
-    hpa_infra_usd = hpa_cost * VCPU_COST_PER_MIN
-    llm["savings_usd"] = hpa_infra_usd - llm["total_cost_usd"]
-    llm["savings_pct"] = llm["savings_usd"] / hpa_infra_usd * 100
-
     best = llm.loc[llm.groupby("llm_model")["sla_pct"].idxmax()].copy()
-    best = best.sort_values("total_cost_usd")
+    best["savings_pct"] = (hpa_vcpu - best["total_vcpu"]) / hpa_vcpu * 100
+    best = best.sort_values("total_vcpu")
 
-    fig, axes = plt.subplots(1, 3, figsize=(22, 7))
+    fig, axes = plt.subplots(1, 2, figsize=(18, 7))
 
-    # Panel 1: Stacked cost breakdown
+    # Panel 1: vCPU-minutes bar chart with baselines
     ax = axes[0]
-    models_order = best["llm_model"].tolist()
-    x = np.arange(len(models_order))
-    infra_vals = best["infra_cost_usd"].values
-    infer_vals = best["inference_cost_usd"].values
-    colors = [MODEL_COLORS.get(m, "gray") for m in models_order]
+    all_rows = pd.concat([best, baselines]).sort_values("total_vcpu")
+    x = np.arange(len(all_rows))
+    colors = [MODEL_COLORS.get(m, "gray") for m in all_rows["llm_model"]]
+    hatches = ["///" if m in BASELINES_LONG else "" for m in all_rows["llm_model"]]
 
-    bars1 = ax.bar(x, infra_vals, width=0.6, color=colors, alpha=0.85,
-                   edgecolor="white", linewidth=0.8, label="Infrastructure (vCPU)")
-    bars2 = ax.bar(x, infer_vals, width=0.6, bottom=infra_vals, color=colors,
-                   alpha=0.4, hatch="//", edgecolor="white", linewidth=0.8,
-                   label="LLM inference")
-    ax.axhline(y=hpa_infra_usd, color="gray", linestyle="--", linewidth=2,
-               alpha=0.7, label=f"HPA baseline (${hpa_infra_usd:.2f})")
+    bars = ax.barh(x, all_rows["total_vcpu"].values, height=0.65, color=colors,
+                   alpha=0.85, edgecolor="white", linewidth=0.8)
+    for bar, h in zip(bars, hatches):
+        bar.set_hatch(h)
 
-    for i, (inf, infer, total) in enumerate(zip(infra_vals, infer_vals, best["total_cost_usd"].values)):
-        ax.text(i, total + 0.05, f"${total:.2f}", ha="center", va="bottom",
-                fontsize=8, fontweight="bold")
+    for i, (_, row) in enumerate(all_rows.iterrows()):
+        model = row["llm_model"]
+        vcpu = row["total_vcpu"]
+        sla = row["sla_pct"]
+        variant = row.get("llm_variant", "")
+        variant_str = f" ({VARIANT_LABELS.get(variant, variant)})" if variant and variant not in ["baseline", "rl"] else ""
+        ax.text(vcpu + 100, i, f"{vcpu:.0f} vCPU-min  |  SLA {sla:.1f}%",
+                ha="left", va="center", fontsize=8.5, fontweight="bold")
 
-    ax.set_xticks(x)
-    ax.set_xticklabels([f"{_label(m)}\n({best[best['llm_model']==m]['llm_variant'].values[0]})"
-                        for m in models_order], fontsize=8, rotation=15, ha="right")
-    ax.set_ylabel("Total Cost (USD / 24h)")
-    ax.set_title("Cost Breakdown: Infrastructure + Inference")
-    ax.legend(fontsize=8, loc="upper right")
-    ax.grid(True, alpha=0.2, axis="y")
-
-    # Panel 2: Inference cost as % of total
-    ax = axes[1]
-    pct_infer = (best["inference_cost_usd"] / best["total_cost_usd"] * 100).values
-
-    bars = ax.barh(x, pct_infer, height=0.6, color=colors, alpha=0.85,
-                   edgecolor="white", linewidth=0.8)
-    for i, pct in enumerate(pct_infer):
-        ax.text(pct + 0.3, i, f"{pct:.1f}%", ha="left", va="center", fontsize=9,
-                fontweight="bold")
-
+    ax.axvline(x=hpa_vcpu, color=MODEL_COLORS["hpa"], linestyle="--", linewidth=1.5,
+               alpha=0.6, label=f"HPA ({hpa_vcpu:.0f})")
     ax.set_yticks(x)
-    ax.set_yticklabels([_label(m) for m in models_order], fontsize=9)
-    ax.set_xlabel("Inference Cost as % of Total Cost")
-    ax.set_title("Inference Overhead Share")
-    ax.set_xlim(0, max(pct_infer) * 1.3)
-    ax.grid(True, alpha=0.2, axis="x")
+    labels = []
+    for _, row in all_rows.iterrows():
+        m = row["llm_model"]
+        v = row.get("llm_variant", "")
+        lbl = _label(m)
+        if v and v not in ["baseline", "rl"]:
+            lbl += f"\n({VARIANT_LABELS.get(v, v)})"
+        labels.append(lbl)
+    ax.set_yticklabels(labels, fontsize=8.5)
+    ax.set_xlabel("Infrastructure Cost (vCPU-minutes / 24h)")
+    ax.set_title("Infrastructure Cost — Best Variant per Model vs Baselines")
+    ax.legend(fontsize=8)
+    ax.grid(True, alpha=0.15, axis="x")
     ax.invert_yaxis()
+    ax.set_xlim(0, max(all_rows["total_vcpu"]) * 1.35)
 
-    # Panel 3: Net savings vs HPA with SLA annotation
-    ax = axes[2]
-    savings_vals = best["savings_pct"].values
-    sla_vals = best["sla_pct"].values
-    bar_colors = ["#4CAF50" if s > 0 else "#F44336" for s in savings_vals]
+    # Panel 2: Savings vs HPA (only methods with >=95% SLA)
+    ax = axes[1]
+    viable = best[best["sla_pct"] >= 95.0].sort_values("savings_pct", ascending=True)
+    bl_viable = baselines[baselines["sla_pct"] >= 95.0].copy()
+    bl_viable["savings_pct"] = (hpa_vcpu - bl_viable["total_vcpu"]) / hpa_vcpu * 100
+    all_viable = pd.concat([viable, bl_viable]).sort_values("savings_pct", ascending=True)
 
-    bars = ax.barh(x, savings_vals, height=0.6, color=bar_colors, alpha=0.75,
+    y = np.arange(len(all_viable))
+    sv = all_viable["savings_pct"].values
+    bar_colors = ["#4CAF50" if s > 0 else "#F44336" for s in sv]
+    v_colors = [MODEL_COLORS.get(m, "gray") for m in all_viable["llm_model"]]
+
+    bars = ax.barh(y, sv, height=0.6, color=v_colors, alpha=0.75,
                    edgecolor="white", linewidth=0.8)
-    for i, (sv, sla) in enumerate(zip(savings_vals, sla_vals)):
-        offset = 1.5 if sv >= 0 else -1.5
-        ha = "left" if sv >= 0 else "right"
-        ax.text(sv + offset, i, f"{sv:+.0f}%  (SLA {sla:.0f}%)", ha=ha, va="center",
-                fontsize=8, fontweight="bold")
+
+    for i, (_, row) in enumerate(all_viable.iterrows()):
+        s = row["savings_pct"]
+        sla = row["sla_pct"]
+        offset = 1.0 if s >= 0 else -1.0
+        ha = "left" if s >= 0 else "right"
+        ax.text(s + offset, i, f"{s:+.1f}%  (SLA {sla:.1f}%)", ha=ha, va="center",
+                fontsize=8.5, fontweight="bold")
 
     ax.axvline(x=0, color="black", linewidth=1, alpha=0.5)
-    ax.set_yticks(x)
-    ax.set_yticklabels([_label(m) for m in models_order], fontsize=9)
-    ax.set_xlabel("Cost Savings vs HPA (%)")
-    ax.set_title("Net Savings vs HPA (including inference cost)")
-    ax.grid(True, alpha=0.2, axis="x")
-    ax.invert_yaxis()
+    ax.set_yticks(y)
+    labels2 = []
+    for _, row in all_viable.iterrows():
+        m = row["llm_model"]
+        v = row.get("llm_variant", "")
+        lbl = _label(m)
+        if v and v not in ["baseline", "rl"]:
+            lbl += f"\n({VARIANT_LABELS.get(v, v)})"
+        labels2.append(lbl)
+    ax.set_yticklabels(labels2, fontsize=8.5)
+    ax.set_xlabel("Infrastructure Savings vs HPA (%)")
+    ax.set_title("Infrastructure Savings vs HPA (methods with SLA >= 95%)")
+    ax.grid(True, alpha=0.15, axis="x")
 
-    fig.suptitle("Cost-Benefit Analysis: LLM Inference Cost vs Infrastructure Savings (24h Simulation)",
+    fig.suptitle("Infrastructure Cost Analysis — 24h Simulation (1440 steps, Alibaba Trace)",
                  fontsize=14, y=1.01)
     plt.tight_layout()
     _save(fig, "18_cost_benefit_analysis", dpi)
