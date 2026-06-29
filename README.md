@@ -223,4 +223,4 @@ All experiment results are stored as CSV files in the `results/` directory. Each
 
 ## License
 
-MIT License. See [LICENSE](LICENSE) for details.
+All rights reserved. See [LICENSE](LICENSE) for details.
