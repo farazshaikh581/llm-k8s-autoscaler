@@ -148,7 +148,7 @@ python plot_all.py              # standard quality
 python plot_all.py --dpi 300    # publication quality
 ```
 
-This generates 17 plots, 3 LaTeX tables, and 2 summary CSVs in the `plots/` directory.
+This generates 18 plots, 3 LaTeX tables, and 2 summary CSVs in the `plots/` directory.
 
 ## Plots
 
@@ -171,6 +171,7 @@ This generates 17 plots, 3 LaTeX tables, and 2 summary CSVs in the `plots/` dire
 | 15 | Latency Distributions | Box plots by model and variant |
 | 16 | Inference Latency | Decision latency across all autoscaling approaches |
 | 17 | Inference Feasibility | Feasibility ratio across decision intervals (1s-60s) |
+| 18 | Infrastructure Cost | vCPU-minutes per method vs HPA baseline with SLA annotations |
 
 ## Infrastructure
 
