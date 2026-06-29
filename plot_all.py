@@ -610,58 +610,81 @@ def plot_k8s_summary_bars(ks, dpi):
 # ═══════════════════════════════════════════════════════════════════════════
 
 def plot_k8s_workload_comparison(ks, dpi):
-    from adjustText import adjust_text
-
     core = ks[ks["model"].isin(CORE_MODELS)]
-    fig, axes = plt.subplots(1, 3, figsize=(20, 7))
 
-    for ax, (metric, ylabel) in zip(axes, [
-        ("sla_pct", "SLA Compliance (%)"),
-        ("mean_latency", "Mean Latency P90 (ms)"),
-        ("scale_events", "Scale Events"),
-    ]):
-        texts = []
-        for model in CORE_MODELS:
-            for variant in VARIANT_ORDER:
-                cpu_row = core[(core["model"] == model) & (core["variant"] == variant) &
-                               (core["workload_type"] == "CPU")]
-                io_row = core[(core["model"] == model) & (core["variant"] == variant) &
-                              (core["workload_type"] == "IO")]
-                if cpu_row.empty or io_row.empty:
-                    continue
-                cpu_val = cpu_row[metric].values[0]
-                io_val = io_row[metric].values[0]
-                ax.scatter(cpu_val, io_val, s=120, c=MODEL_COLORS[model],
-                           marker=VARIANT_MARKERS.get(variant, "o"), alpha=0.85,
-                           edgecolors="white", linewidth=0.8, zorder=5)
-                short_m = _label(model).split()[-1]
-                short_v = VARIANT_LABELS.get(variant, variant)[:3]
-                txt = ax.text(cpu_val, io_val, f" {short_m}/{short_v}",
-                              fontsize=6, ha="left", va="center")
-                texts.append(txt)
+    rows = []
+    for model in CORE_MODELS:
+        for variant in VARIANT_ORDER:
+            cpu_row = core[(core["model"] == model) & (core["variant"] == variant) &
+                           (core["workload_type"] == "CPU")]
+            io_row = core[(core["model"] == model) & (core["variant"] == variant) &
+                          (core["workload_type"] == "IO")]
+            if cpu_row.empty or io_row.empty:
+                continue
+            rows.append({
+                "model": model, "variant": variant,
+                "label": f"{_label(model)} / {VARIANT_LABELS[variant]}",
+                "cpu_sla": cpu_row["sla_pct"].values[0],
+                "io_sla": io_row["sla_pct"].values[0],
+                "cpu_lat": cpu_row["mean_latency"].values[0],
+                "io_lat": io_row["mean_latency"].values[0],
+                "cpu_scale": cpu_row["scale_events"].values[0],
+                "io_scale": io_row["scale_events"].values[0],
+            })
+    data = pd.DataFrame(rows)
+    data = data.sort_values(["model", "variant"]).reset_index(drop=True)
 
-        lims = list(ax.get_xlim()) + list(ax.get_ylim())
-        lo, hi = min(lims), max(lims)
-        pad = (hi - lo) * 0.05
-        lo, hi = lo - pad, hi + pad
-        ax.plot([lo, hi], [lo, hi], "k:", alpha=0.3, label="CPU = IO")
-        ax.set_xlim(lo, hi)
-        ax.set_ylim(lo, hi)
-        ax.set_xlabel(f"CPU Workload — {ylabel}")
-        ax.set_ylabel(f"I/O Workload — {ylabel}")
-        ax.grid(True, alpha=0.2)
+    fig, axes = plt.subplots(1, 3, figsize=(22, 8))
+    metrics = [
+        ("cpu_sla", "io_sla", "SLA Compliance (%)"),
+        ("cpu_lat", "io_lat", "Mean Latency P90 (ms)"),
+        ("cpu_scale", "io_scale", "Scale Events"),
+    ]
 
-        adjust_text(texts, ax=ax, arrowprops=dict(arrowstyle="-", color="gray", alpha=0.4, lw=0.5),
-                    force_text=(0.6, 0.6), force_points=(0.4, 0.4), expand=(1.4, 1.4))
+    y_pos = np.arange(len(data))
 
-    legend_elements = [Line2D([0], [0], marker="o", color="w", markerfacecolor=MODEL_COLORS[m],
-                              markersize=8, label=_label(m)) for m in CORE_MODELS]
-    for v in VARIANT_ORDER:
-        legend_elements.append(Line2D([0], [0], marker=VARIANT_MARKERS[v], color="w",
-                                      markerfacecolor="gray", markersize=8, label=VARIANT_LABELS[v]))
-    axes[1].legend(handles=legend_elements, fontsize=7, ncol=2, loc="best")
+    for ax, (cpu_col, io_col, xlabel) in zip(axes, metrics):
+        for i, row in data.iterrows():
+            color = MODEL_COLORS[row["model"]]
+            cpu_val = row[cpu_col]
+            io_val = row[io_col]
+            ax.plot([cpu_val, io_val], [i, i], "-", color=color, alpha=0.4, linewidth=2, zorder=3)
+            ax.scatter(cpu_val, i, s=100, c=color, marker="s", edgecolors="white",
+                       linewidth=0.8, zorder=5, label="CPU" if i == 0 else None)
+            ax.scatter(io_val, i, s=100, c=color, marker="o", edgecolors="white",
+                       linewidth=0.8, zorder=5, alpha=0.6, label="IO" if i == 0 else None)
 
-    fig.suptitle("CPU vs I/O Workload Performance Comparison (K8s v2 Real Cluster)", fontsize=14, y=1.01)
+        ax.set_yticks(y_pos)
+        ax.set_yticklabels(data["label"], fontsize=7.5)
+        ax.set_xlabel(xlabel)
+        ax.grid(True, alpha=0.15, axis="x")
+        ax.invert_yaxis()
+
+        for m_idx, model in enumerate(CORE_MODELS):
+            block = data[data["model"] == model]
+            if block.empty:
+                continue
+            y_start = block.index[0] - 0.5
+            y_end = block.index[-1] + 0.5
+            if m_idx % 2 == 0:
+                ax.axhspan(y_start, y_end, color="gray", alpha=0.04, zorder=0)
+
+    legend_elements = [
+        Line2D([0], [0], marker="s", color="w", markerfacecolor="gray",
+               markersize=9, label="CPU workload"),
+        Line2D([0], [0], marker="o", color="w", markerfacecolor="gray",
+               markersize=9, alpha=0.6, label="I/O workload"),
+        Line2D([0], [0], linestyle="-", color="gray", alpha=0.4, linewidth=2,
+               label="CPU-IO gap"),
+    ]
+    for m in CORE_MODELS:
+        legend_elements.append(Line2D([0], [0], marker="o", color="w",
+                                      markerfacecolor=MODEL_COLORS[m], markersize=8,
+                                      label=_label(m)))
+    axes[1].legend(handles=legend_elements, fontsize=7, ncol=2, loc="lower right")
+
+    fig.suptitle("CPU vs I/O Workload Performance — Dumbbell Comparison (K8s v2 Real Cluster)",
+                 fontsize=14, y=1.01)
     plt.tight_layout()
     _save(fig, "08_k8s_workload_comparison", dpi)
 
@@ -1169,6 +1192,111 @@ def generate_latex_tables(ls, ks):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# PLOT 18: Cost-Benefit Analysis — Inference Cost vs Infrastructure Savings
+# ═══════════════════════════════════════════════════════════════════════════
+
+VCPU_COST_PER_MIN = 0.05 / 60  # $0.05/vCPU-hour → $/vCPU-min
+TOKEN_COST_PER_M = {
+    "llama-8b": 0.10, "llama-70b": 0.80, "mistral-small4": 0.15,
+    "qwen3-80b": 1.00, "gpt-oss-120b": 2.00, "llama4-scout": 0.25,
+}
+
+def plot_cost_benefit(ls, dpi):
+    hpa_cost = ls[ls["llm_model"] == "hpa"]["total_vcpu"].values[0]
+
+    core_plus = CORE_MODELS + SUPPLEMENTARY
+    llm = ls[ls["llm_model"].isin(core_plus)].copy()
+    if llm.empty:
+        return
+
+    llm["infra_cost_usd"] = llm["total_vcpu"] * VCPU_COST_PER_MIN
+    llm["inference_cost_usd"] = llm.apply(
+        lambda r: r["total_tokens"] / 1e6 * TOKEN_COST_PER_M.get(r["llm_model"], 1.0), axis=1)
+    llm["total_cost_usd"] = llm["infra_cost_usd"] + llm["inference_cost_usd"]
+    hpa_infra_usd = hpa_cost * VCPU_COST_PER_MIN
+    llm["savings_usd"] = hpa_infra_usd - llm["total_cost_usd"]
+    llm["savings_pct"] = llm["savings_usd"] / hpa_infra_usd * 100
+
+    best = llm.loc[llm.groupby("llm_model")["sla_pct"].idxmax()].copy()
+    best = best.sort_values("total_cost_usd")
+
+    fig, axes = plt.subplots(1, 3, figsize=(22, 7))
+
+    # Panel 1: Stacked cost breakdown
+    ax = axes[0]
+    models_order = best["llm_model"].tolist()
+    x = np.arange(len(models_order))
+    infra_vals = best["infra_cost_usd"].values
+    infer_vals = best["inference_cost_usd"].values
+    colors = [MODEL_COLORS.get(m, "gray") for m in models_order]
+
+    bars1 = ax.bar(x, infra_vals, width=0.6, color=colors, alpha=0.85,
+                   edgecolor="white", linewidth=0.8, label="Infrastructure (vCPU)")
+    bars2 = ax.bar(x, infer_vals, width=0.6, bottom=infra_vals, color=colors,
+                   alpha=0.4, hatch="//", edgecolor="white", linewidth=0.8,
+                   label="LLM inference")
+    ax.axhline(y=hpa_infra_usd, color="gray", linestyle="--", linewidth=2,
+               alpha=0.7, label=f"HPA baseline (${hpa_infra_usd:.2f})")
+
+    for i, (inf, infer, total) in enumerate(zip(infra_vals, infer_vals, best["total_cost_usd"].values)):
+        ax.text(i, total + 0.05, f"${total:.2f}", ha="center", va="bottom",
+                fontsize=8, fontweight="bold")
+
+    ax.set_xticks(x)
+    ax.set_xticklabels([f"{_label(m)}\n({best[best['llm_model']==m]['llm_variant'].values[0]})"
+                        for m in models_order], fontsize=8, rotation=15, ha="right")
+    ax.set_ylabel("Total Cost (USD / 24h)")
+    ax.set_title("Cost Breakdown: Infrastructure + Inference")
+    ax.legend(fontsize=8, loc="upper right")
+    ax.grid(True, alpha=0.2, axis="y")
+
+    # Panel 2: Inference cost as % of total
+    ax = axes[1]
+    pct_infer = (best["inference_cost_usd"] / best["total_cost_usd"] * 100).values
+
+    bars = ax.barh(x, pct_infer, height=0.6, color=colors, alpha=0.85,
+                   edgecolor="white", linewidth=0.8)
+    for i, pct in enumerate(pct_infer):
+        ax.text(pct + 0.3, i, f"{pct:.1f}%", ha="left", va="center", fontsize=9,
+                fontweight="bold")
+
+    ax.set_yticks(x)
+    ax.set_yticklabels([_label(m) for m in models_order], fontsize=9)
+    ax.set_xlabel("Inference Cost as % of Total Cost")
+    ax.set_title("Inference Overhead Share")
+    ax.set_xlim(0, max(pct_infer) * 1.3)
+    ax.grid(True, alpha=0.2, axis="x")
+    ax.invert_yaxis()
+
+    # Panel 3: Net savings vs HPA with SLA annotation
+    ax = axes[2]
+    savings_vals = best["savings_pct"].values
+    sla_vals = best["sla_pct"].values
+    bar_colors = ["#4CAF50" if s > 0 else "#F44336" for s in savings_vals]
+
+    bars = ax.barh(x, savings_vals, height=0.6, color=bar_colors, alpha=0.75,
+                   edgecolor="white", linewidth=0.8)
+    for i, (sv, sla) in enumerate(zip(savings_vals, sla_vals)):
+        offset = 1.5 if sv >= 0 else -1.5
+        ha = "left" if sv >= 0 else "right"
+        ax.text(sv + offset, i, f"{sv:+.0f}%  (SLA {sla:.0f}%)", ha=ha, va="center",
+                fontsize=8, fontweight="bold")
+
+    ax.axvline(x=0, color="black", linewidth=1, alpha=0.5)
+    ax.set_yticks(x)
+    ax.set_yticklabels([_label(m) for m in models_order], fontsize=9)
+    ax.set_xlabel("Cost Savings vs HPA (%)")
+    ax.set_title("Net Savings vs HPA (including inference cost)")
+    ax.grid(True, alpha=0.2, axis="x")
+    ax.invert_yaxis()
+
+    fig.suptitle("Cost-Benefit Analysis: LLM Inference Cost vs Infrastructure Savings (24h Simulation)",
+                 fontsize=14, y=1.01)
+    plt.tight_layout()
+    _save(fig, "18_cost_benefit_analysis", dpi)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # CSV Summaries
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -1215,6 +1343,7 @@ def main():
     plot_variant_timeseries(long_df, dpi)
     plot_workload_difficulty(ks, dpi)
     plot_latency_distributions(long_df, dpi)
+    plot_cost_benefit(ls, dpi)
 
     print("\nGenerating LaTeX tables...")
     generate_latex_tables(ls, ks)
