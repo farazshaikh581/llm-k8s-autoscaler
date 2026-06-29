@@ -409,31 +409,45 @@ def plot_model_size_scaling(ls, dpi):
     zs["size"] = zs["llm_model"].map(MODEL_SIZES)
     zs = zs.sort_values("size")
 
-    fig, axes = plt.subplots(1, 4, figsize=(20, 5))
+    model_order = zs["llm_model"].tolist()
+    x_labels = [f"{_label(m)}\n({MODEL_SIZES[m]}B)" for m in model_order]
+    x = np.arange(len(model_order))
+
+    fig, axes = plt.subplots(2, 2, figsize=(14, 9))
+    axes = axes.flatten()
     metrics = [
-        ("sla_pct", "SLA Compliance (%)"),
-        ("mean_latency", "Mean Latency P90 (ms)"),
-        ("total_vcpu", "Cost (vCPU-min)"),
-        ("scale_events", "Scale Events"),
+        ("sla_pct", "SLA Compliance (%)", False),
+        ("mean_latency", "Mean Latency P90 (ms)", True),
+        ("total_vcpu", "Cost (vCPU-min)", False),
+        ("scale_events", "Scale Events", True),
     ]
 
-    for ax, (metric, ylabel) in zip(axes, metrics):
-        ax.plot(zs["size"], zs[metric], "o-", markersize=10, color="#2196F3",
-                linewidth=2, zorder=5, label="LLM (zero-shot)")
-        for _, row in zs.iterrows():
-            ax.annotate(_label(row["llm_model"]), (row["size"], row[metric]),
-                        textcoords="offset points", xytext=(0, 12), fontsize=7,
-                        ha="center", fontweight="bold")
+    for ax, (metric, ylabel, use_log) in zip(axes, metrics):
+        colors = [MODEL_COLORS.get(m, "gray") for m in model_order]
+        vals = [zs[zs["llm_model"] == m][metric].values[0] for m in model_order]
+        bars = ax.bar(x, vals, color=colors, width=0.6, edgecolor="white",
+                      linewidth=0.8, zorder=5)
+
+        for bar, v in zip(bars, vals):
+            fmt = f"{v:.1f}" if v < 100 else f"{v:.0f}"
+            ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height(),
+                    fmt, ha="center", va="bottom", fontsize=8, fontweight="bold")
+
         for _, br in base.iterrows():
-            ax.axhline(y=br[metric], linestyle="--", alpha=0.5, linewidth=1.5,
+            ax.axhline(y=br[metric], linestyle="--", alpha=0.6, linewidth=1.5,
                        color=MODEL_COLORS.get(br["llm_model"], "gray"),
                        label=_label(br["llm_model"]))
-        ax.set_xlabel("Model Size (B parameters)")
+
+        if use_log and max(vals) > 10 * np.median(vals):
+            ax.set_yscale("log")
+
+        ax.set_xticks(x)
+        ax.set_xticklabels(x_labels, fontsize=8)
         ax.set_ylabel(ylabel)
         ax.legend(fontsize=7, loc="best")
-        ax.grid(True, alpha=0.2)
+        ax.grid(True, alpha=0.2, axis="y")
 
-    fig.suptitle("Zero-Shot Autoscaling Performance vs Model Size", fontsize=14, y=1.01)
+    fig.suptitle("Zero-Shot Performance vs Model Size (Larger ≠ Better)", fontsize=14, y=1.01)
     plt.tight_layout()
     _save(fig, "05_model_size_scaling", dpi)
 
@@ -443,37 +457,60 @@ def plot_model_size_scaling(ls, dpi):
 # ═══════════════════════════════════════════════════════════════════════════
 
 def plot_cost_sla_pareto(ls, dpi):
-    fig, ax = plt.subplots(figsize=(12, 8))
+    from adjustText import adjust_text
+
+    fig, ax = plt.subplots(figsize=(14, 9))
 
     core = ls[ls["llm_model"].isin(CORE_MODELS)]
     base = ls[ls["llm_model"].isin(BASELINES_LONG)]
-    supp = ls[ls["llm_model"].isin(SUPPLEMENTARY)]
+
+    texts = []
+    all_x, all_y = [], []
 
     for _, r in core.iterrows():
         color = MODEL_COLORS[r["llm_model"]]
         marker = VARIANT_MARKERS.get(r["llm_variant"], "o")
-        ax.scatter(r["total_vcpu"], r["sla_pct"], s=120, c=color, marker=marker,
-                   alpha=0.8, edgecolors="white", linewidth=0.5, zorder=5)
-        ax.annotate(f"{_label(r['llm_model'])}\n({VARIANT_LABELS.get(r['llm_variant'], r['llm_variant'])})",
-                    (r["total_vcpu"], r["sla_pct"]),
-                    textcoords="offset points", xytext=(8, -5), fontsize=6)
+        ax.scatter(r["total_vcpu"], r["sla_pct"], s=140, c=color, marker=marker,
+                   alpha=0.85, edgecolors="white", linewidth=0.8, zorder=5)
+        short_model = _label(r["llm_model"]).split()[-1]
+        short_variant = VARIANT_LABELS.get(r["llm_variant"], r["llm_variant"])
+        txt = ax.text(r["total_vcpu"], r["sla_pct"],
+                      f" {short_model}/{short_variant}", fontsize=7, ha="left", va="center")
+        texts.append(txt)
+        all_x.append(r["total_vcpu"])
+        all_y.append(r["sla_pct"])
 
     for _, r in base.iterrows():
         color = MODEL_COLORS.get(r["llm_model"], "gray")
-        ax.scatter(r["total_vcpu"], r["sla_pct"], s=200, c=color, marker="*",
+        ax.scatter(r["total_vcpu"], r["sla_pct"], s=220, c=color, marker="*",
                    alpha=0.9, edgecolors="black", linewidth=0.5, zorder=6)
-        ax.annotate(_label(r["llm_model"]),
-                    (r["total_vcpu"], r["sla_pct"]),
-                    textcoords="offset points", xytext=(8, -5), fontsize=7, fontweight="bold")
+        txt = ax.text(r["total_vcpu"], r["sla_pct"],
+                      f" {_label(r['llm_model'])}", fontsize=8, fontweight="bold",
+                      ha="left", va="center")
+        texts.append(txt)
+        all_x.append(r["total_vcpu"])
+        all_y.append(r["sla_pct"])
 
-    for _, r in supp.iterrows():
-        color = MODEL_COLORS.get(r["llm_model"], "gray")
-        marker = VARIANT_MARKERS.get(r["llm_variant"], "o")
-        ax.scatter(r["total_vcpu"], r["sla_pct"], s=80, c=color, marker=marker,
-                   alpha=0.5, edgecolors="gray", linewidth=0.5, zorder=4)
+    pareto_pts = sorted(zip(all_x, all_y), key=lambda p: p[0])
+    frontier_x, frontier_y = [], []
+    best_sla = -1
+    for cx, cy in pareto_pts:
+        if cy > best_sla:
+            frontier_x.append(cx)
+            frontier_y.append(cy)
+            best_sla = cy
+    if len(frontier_x) > 1:
+        ax.plot(frontier_x, frontier_y, "k--", alpha=0.4, linewidth=1.5, zorder=3,
+                label="Pareto frontier")
 
     ax.axhline(y=99, color="green", linestyle=":", alpha=0.5, linewidth=1.5, label="99% SLA target")
     ax.axhline(y=95, color="orange", linestyle=":", alpha=0.5, linewidth=1.5, label="95% SLA target")
+
+    y_min = min(all_y) - 2
+    ax.set_ylim(max(y_min, 75), 101)
+
+    adjust_text(texts, ax=ax, arrowprops=dict(arrowstyle="-", color="gray", alpha=0.5, lw=0.5),
+                force_text=(0.8, 0.8), force_points=(0.5, 0.5), expand=(1.5, 1.5))
 
     legend_elements = []
     for m in CORE_MODELS:
@@ -485,6 +522,7 @@ def plot_cost_sla_pareto(ls, dpi):
     for v in VARIANT_ORDER:
         legend_elements.append(Line2D([0], [0], marker=VARIANT_MARKERS[v], color="w",
                                       markerfacecolor="gray", markersize=8, label=VARIANT_LABELS[v]))
+    legend_elements.append(Line2D([0], [0], linestyle="--", color="black", alpha=0.4, label="Pareto frontier"))
     ax.legend(handles=legend_elements, fontsize=7, ncol=3, loc="lower left")
 
     ax.set_xlabel("Cost (vCPU-minutes)")
@@ -696,14 +734,16 @@ def plot_llm_overhead(ls, dpi):
 # ═══════════════════════════════════════════════════════════════════════════
 
 def plot_sim_vs_real(ls, ks, dpi):
-    fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+    from adjustText import adjust_text
+
+    fig, axes = plt.subplots(1, 2, figsize=(16, 7))
     metrics = [
         ("sla_pct", "SLA Compliance (%)"),
         ("mean_latency", "Mean Latency P90 (ms)"),
-        ("scale_events", "Scale Events"),
     ]
 
     for ax, (metric, ylabel) in zip(axes, metrics):
+        texts = []
         for model in CORE_MODELS:
             for variant in VARIANT_ORDER:
                 sim_row = ls[(ls["llm_model"] == model) & (ls["llm_variant"] == variant)]
@@ -712,14 +752,16 @@ def plot_sim_vs_real(ls, ks, dpi):
                 if sim_row.empty or k8s_row.empty:
                     continue
                 sim_val = sim_row[metric].values[0]
-                if metric == "mean_latency":
-                    k8s_val = k8s_row["mean_latency"].values[0]
-                else:
-                    k8s_val = k8s_row[metric].values[0]
+                k8s_val = k8s_row["mean_latency"].values[0] if metric == "mean_latency" else k8s_row[metric].values[0]
 
-                ax.scatter(sim_val, k8s_val, s=80, c=MODEL_COLORS[model],
-                           marker=VARIANT_MARKERS.get(variant, "o"), alpha=0.8,
-                           edgecolors="white", linewidth=0.5, zorder=5)
+                ax.scatter(sim_val, k8s_val, s=100, c=MODEL_COLORS[model],
+                           marker=VARIANT_MARKERS.get(variant, "o"), alpha=0.85,
+                           edgecolors="white", linewidth=0.8, zorder=5)
+                short_model = _label(model).split()[-1]
+                short_variant = VARIANT_LABELS.get(variant, variant)
+                txt = ax.text(sim_val, k8s_val, f" {short_model}/{short_variant}",
+                              fontsize=6.5, ha="left", va="center")
+                texts.append(txt)
 
         for bm in BASELINES_LONG:
             sim_row = ls[ls["llm_model"] == bm]
@@ -728,21 +770,40 @@ def plot_sim_vs_real(ls, ks, dpi):
                 continue
             sim_val = sim_row[metric].values[0]
             k8s_val = k8s_row["mean_latency"].values[0] if metric == "mean_latency" else k8s_row[metric].values[0]
-            ax.scatter(sim_val, k8s_val, s=150, c=MODEL_COLORS.get(bm, "gray"),
+            ax.scatter(sim_val, k8s_val, s=200, c=MODEL_COLORS.get(bm, "gray"),
                        marker="*", alpha=0.9, edgecolors="black", linewidth=0.5, zorder=6)
-            ax.annotate(_label(bm), (sim_val, k8s_val),
-                        textcoords="offset points", xytext=(8, 5), fontsize=7, fontweight="bold")
+            txt = ax.text(sim_val, k8s_val, f" {_label(bm)}",
+                          fontsize=8, fontweight="bold", ha="left", va="center")
+            texts.append(txt)
 
         lims_all = list(ax.get_xlim()) + list(ax.get_ylim())
         lo, hi = min(lims_all), max(lims_all)
-        ax.plot([lo, hi], [lo, hi], "k:", alpha=0.3, label="sim = real")
+        pad = (hi - lo) * 0.05
+        lo, hi = lo - pad, hi + pad
+        ax.plot([lo, hi], [lo, hi], "k:", alpha=0.3, linewidth=1.5)
+        ax.fill_between([lo, hi], [lo, hi], hi, alpha=0.04, color="green", label="Real > Sim")
+        ax.fill_between([lo, hi], lo, [lo, hi], alpha=0.04, color="red", label="Sim > Real")
+        ax.set_xlim(lo, hi)
+        ax.set_ylim(lo, hi)
+        ax.set_aspect("equal")
         ax.set_xlabel(f"Simulation — {ylabel}")
         ax.set_ylabel(f"Real Cluster (CPU) — {ylabel}")
         ax.grid(True, alpha=0.2)
 
-    legend_elements = [Line2D([0], [0], marker="o", color="w", markerfacecolor=MODEL_COLORS[m],
-                              markersize=8, label=_label(m)) for m in CORE_MODELS]
-    axes[1].legend(handles=legend_elements, fontsize=7, ncol=2, loc="best")
+        adjust_text(texts, ax=ax, arrowprops=dict(arrowstyle="-", color="gray", alpha=0.4, lw=0.5),
+                    force_text=(0.6, 0.6), force_points=(0.4, 0.4), expand=(1.4, 1.4))
+
+    legend_elements = []
+    for m in CORE_MODELS:
+        legend_elements.append(Line2D([0], [0], marker="o", color="w", markerfacecolor=MODEL_COLORS[m],
+                                      markersize=8, label=_label(m)))
+    for m in BASELINES_LONG:
+        legend_elements.append(Line2D([0], [0], marker="*", color="w", markerfacecolor=MODEL_COLORS.get(m, "gray"),
+                                      markersize=10, label=_label(m)))
+    for v in VARIANT_ORDER:
+        legend_elements.append(Line2D([0], [0], marker=VARIANT_MARKERS[v], color="w",
+                                      markerfacecolor="gray", markersize=8, label=VARIANT_LABELS[v]))
+    axes[0].legend(handles=legend_elements, fontsize=7, ncol=3, loc="lower right")
 
     fig.suptitle("Simulation Fidelity: Simulated vs Real K8s Cluster (CPU Workload)", fontsize=14, y=1.01)
     plt.tight_layout()
