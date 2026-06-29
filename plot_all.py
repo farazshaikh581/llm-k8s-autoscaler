@@ -270,72 +270,92 @@ def plot_long_summary_bars(ls, dpi):
 # ═══════════════════════════════════════════════════════════════════════════
 
 def plot_long_timeseries(long_df, dpi):
+    SMOOTH_W = 15
     trace = np.load(TRACE_FILE)
-    fig = plt.figure(figsize=(16, 12))
-    gs = gridspec.GridSpec(4, 1, height_ratios=[1, 1.2, 1.2, 0.8], hspace=0.25)
+    fig = plt.figure(figsize=(16, 14))
+    gs = gridspec.GridSpec(3, 2, height_ratios=[0.6, 1, 1], hspace=0.30, wspace=0.25)
 
-    ax_rps = fig.add_subplot(gs[0])
-    ax_rep = fig.add_subplot(gs[1], sharex=ax_rps)
-    ax_lat = fig.add_subplot(gs[2], sharex=ax_rps)
-    ax_cpu = fig.add_subplot(gs[3], sharex=ax_rps)
+    ax_rps = fig.add_subplot(gs[0, :])
+    ax_rep_llm = fig.add_subplot(gs[1, 0], sharex=ax_rps)
+    ax_rep_base = fig.add_subplot(gs[1, 1], sharex=ax_rps)
+    ax_lat_llm = fig.add_subplot(gs[2, 0], sharex=ax_rps)
+    ax_lat_base = fig.add_subplot(gs[2, 1], sharex=ax_rps)
 
     steps = np.arange(LONG_STEPS)
-    ax_rps.fill_between(steps, trace[:LONG_STEPS], alpha=0.3, color="gray")
-    ax_rps.plot(steps, trace[:LONG_STEPS], "gray", alpha=0.6, linewidth=0.6)
+    ax_rps.fill_between(steps, trace[:LONG_STEPS], alpha=0.2, color="gray")
+    ax_rps.plot(steps, trace[:LONG_STEPS], "gray", alpha=0.5, linewidth=0.6)
     ax_rps.set_ylabel("RPS")
-    ax_rps.set_title("Workload Trace")
+    ax_rps.set_title("Workload Trace (Alibaba 2018)")
     ax_rps.grid(True, alpha=0.2)
+    plt.setp(ax_rps.get_xticklabels(), visible=False)
 
     optimal = np.ceil(trace[:LONG_STEPS] / 200).astype(int).clip(1, 20)
-    ax_rep.plot(steps, optimal, "k:", alpha=0.4, label="Optimal", linewidth=1)
+    optimal_smooth = pd.Series(optimal).rolling(SMOOTH_W, center=True, min_periods=1).mean()
+    for ax in [ax_rep_llm, ax_rep_base]:
+        ax.plot(steps, optimal_smooth, "k:", alpha=0.35, label="Optimal", linewidth=1)
 
-    plot_configs = [
-        ("llama-70b", "domain", "-", 2.0),
-        ("llama-8b", "domain", "-", 1.5),
-        ("mistral-small4", "domain", "-", 1.5),
-        ("qwen3-80b", "domain", "-", 1.5),
+    llm_configs = [
+        ("llama-70b", "domain", "-", 2.5, 0.9),
+        ("llama-8b", "domain", "-", 2.0, 0.85),
+        ("mistral-small4", "domain", "-.", 2.0, 0.85),
+        ("qwen3-80b", "domain", "--", 2.0, 0.85),
     ]
     baseline_configs = [
-        ("hpa", "baseline", "--", 1.5),
-        ("keda", "baseline", "--", 1.5),
-        ("dqn", "rl", "--", 1.0),
-        ("ppo", "rl", "--", 1.0),
+        ("hpa", "baseline", "-", 2.5, 0.9),
+        ("keda", "baseline", "--", 2.0, 0.85),
+        ("dqn", "rl", "-.", 2.0, 0.85),
+        ("ppo", "rl", ":", 2.0, 0.85),
     ]
 
-    for model, variant, linestyle, lw in plot_configs + baseline_configs:
+    def _smooth(series):
+        return series.rolling(SMOOTH_W, center=True, min_periods=1).mean()
+
+    for model, variant, linestyle, lw, alpha in llm_configs:
         mask = (long_df["llm_model"] == model) & (long_df["llm_variant"] == variant)
         d = long_df[mask].sort_values("step")
         if d.empty:
             continue
         color = MODEL_COLORS.get(model, "gray")
         lab = _label(model)
-        ax_rep.plot(d["step"], d["ready_replicas"], linestyle, color=color, alpha=0.7,
-                    linewidth=lw, label=lab)
-        ax_lat.plot(d["step"], d["latency_p90"], linestyle, color=color, alpha=0.7,
-                    linewidth=lw, label=lab)
-        ax_cpu.plot(d["step"], d["cpu_pct"], linestyle, color=color, alpha=0.7,
-                    linewidth=lw, label=lab)
+        ax_rep_llm.plot(d["step"], _smooth(d["ready_replicas"]), linestyle, color=color,
+                        alpha=alpha, linewidth=lw, label=lab)
+        ax_lat_llm.plot(d["step"], _smooth(d["latency_p90"]), linestyle, color=color,
+                        alpha=alpha, linewidth=lw, label=lab)
 
-    ax_lat.axhline(y=SLA_MS, color="red", linestyle=":", alpha=0.6, linewidth=1.5, label="SLA (200ms)")
+    for model, variant, linestyle, lw, alpha in baseline_configs:
+        mask = (long_df["llm_model"] == model) & (long_df["llm_variant"] == variant)
+        d = long_df[mask].sort_values("step")
+        if d.empty:
+            continue
+        color = MODEL_COLORS.get(model, "gray")
+        lab = _label(model)
+        ax_rep_base.plot(d["step"], _smooth(d["ready_replicas"]), linestyle, color=color,
+                         alpha=alpha, linewidth=lw, label=lab)
+        ax_lat_base.plot(d["step"], _smooth(d["latency_p90"]), linestyle, color=color,
+                         alpha=alpha, linewidth=lw, label=lab)
 
-    ax_rep.set_ylabel("Ready Replicas")
-    ax_rep.set_title("Replica Scaling Decisions (domain variant)")
-    ax_rep.legend(fontsize=7, ncol=4, loc="upper right")
-    ax_rep.set_ylim(0, 21)
-    ax_rep.grid(True, alpha=0.2)
+    for ax in [ax_lat_llm, ax_lat_base]:
+        ax.axhline(y=SLA_MS, color="red", linestyle=":", alpha=0.6, linewidth=1.5, label="SLA (200ms)")
 
-    ax_lat.set_ylabel("Latency P90 (ms)")
-    ax_lat.set_title("Tail Latency")
-    ax_lat.set_yscale("log")
-    ax_lat.legend(fontsize=7, ncol=4, loc="upper right")
-    ax_lat.grid(True, alpha=0.2)
+    for ax in [ax_rep_llm, ax_rep_base]:
+        ax.set_ylabel("Ready Replicas")
+        ax.set_ylim(0, 21)
+        ax.grid(True, alpha=0.2)
+        ax.legend(fontsize=8, loc="upper right")
+        plt.setp(ax.get_xticklabels(), visible=False)
+    ax_rep_llm.set_title("Replicas — LLM Autoscalers (domain)")
+    ax_rep_base.set_title("Replicas — Baselines")
 
-    ax_cpu.set_ylabel("CPU %")
-    ax_cpu.set_xlabel("Step (minutes)")
-    ax_cpu.set_title("CPU Utilization")
-    ax_cpu.grid(True, alpha=0.2)
+    for ax in [ax_lat_llm, ax_lat_base]:
+        ax.set_ylabel("Latency P90 (ms)")
+        ax.set_yscale("log")
+        ax.grid(True, alpha=0.2)
+        ax.set_xlabel("Step (minutes)")
+        ax.legend(fontsize=8, loc="upper right")
+    ax_lat_llm.set_title("Tail Latency — LLM Autoscalers (domain)")
+    ax_lat_base.set_title("Tail Latency — Baselines")
 
-    fig.suptitle("Long Simulation — Time-Series: LLMs (domain) vs Baselines", fontsize=14, y=1.01)
+    fig.suptitle("Long Simulation (1440 steps) — Time-Series: LLMs vs Baselines", fontsize=14, y=1.01)
     _save(fig, "03_long_sim_timeseries", dpi)
 
 
@@ -590,14 +610,17 @@ def plot_k8s_summary_bars(ks, dpi):
 # ═══════════════════════════════════════════════════════════════════════════
 
 def plot_k8s_workload_comparison(ks, dpi):
+    from adjustText import adjust_text
+
     core = ks[ks["model"].isin(CORE_MODELS)]
-    fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+    fig, axes = plt.subplots(1, 3, figsize=(20, 7))
 
     for ax, (metric, ylabel) in zip(axes, [
         ("sla_pct", "SLA Compliance (%)"),
         ("mean_latency", "Mean Latency P90 (ms)"),
         ("scale_events", "Scale Events"),
     ]):
+        texts = []
         for model in CORE_MODELS:
             for variant in VARIANT_ORDER:
                 cpu_row = core[(core["model"] == model) & (core["variant"] == variant) &
@@ -608,16 +631,28 @@ def plot_k8s_workload_comparison(ks, dpi):
                     continue
                 cpu_val = cpu_row[metric].values[0]
                 io_val = io_row[metric].values[0]
-                ax.scatter(cpu_val, io_val, s=80, c=MODEL_COLORS[model],
-                           marker=VARIANT_MARKERS.get(variant, "o"), alpha=0.8,
-                           edgecolors="white", linewidth=0.5, zorder=5)
+                ax.scatter(cpu_val, io_val, s=120, c=MODEL_COLORS[model],
+                           marker=VARIANT_MARKERS.get(variant, "o"), alpha=0.85,
+                           edgecolors="white", linewidth=0.8, zorder=5)
+                short_m = _label(model).split()[-1]
+                short_v = VARIANT_LABELS.get(variant, variant)[:3]
+                txt = ax.text(cpu_val, io_val, f" {short_m}/{short_v}",
+                              fontsize=6, ha="left", va="center")
+                texts.append(txt)
 
         lims = list(ax.get_xlim()) + list(ax.get_ylim())
         lo, hi = min(lims), max(lims)
+        pad = (hi - lo) * 0.05
+        lo, hi = lo - pad, hi + pad
         ax.plot([lo, hi], [lo, hi], "k:", alpha=0.3, label="CPU = IO")
+        ax.set_xlim(lo, hi)
+        ax.set_ylim(lo, hi)
         ax.set_xlabel(f"CPU Workload — {ylabel}")
         ax.set_ylabel(f"I/O Workload — {ylabel}")
         ax.grid(True, alpha=0.2)
+
+        adjust_text(texts, ax=ax, arrowprops=dict(arrowstyle="-", color="gray", alpha=0.4, lw=0.5),
+                    force_text=(0.6, 0.6), force_points=(0.4, 0.4), expand=(1.4, 1.4))
 
     legend_elements = [Line2D([0], [0], marker="o", color="w", markerfacecolor=MODEL_COLORS[m],
                               markersize=8, label=_label(m)) for m in CORE_MODELS]
@@ -636,51 +671,68 @@ def plot_k8s_workload_comparison(ks, dpi):
 # ═══════════════════════════════════════════════════════════════════════════
 
 def plot_k8s_timeseries(k8s_df, dpi):
-    fig, axes = plt.subplots(2, 3, figsize=(20, 10))
+    SMOOTH_W = 5
+
+    llm_styles = [
+        ("llama-8b", "domain", "-", 2.5, 0.9),
+        ("llama-70b", "domain", "--", 2.0, 0.85),
+        ("mistral-small4", "domain", "-.", 2.0, 0.85),
+        ("qwen3-80b", "domain", ":", 2.0, 0.85),
+    ]
+    base_styles = [
+        ("hpa", "baseline", "-", 2.5, 0.9),
+        ("keda", "baseline", "--", 2.0, 0.85),
+        ("dqn", "baseline", "-.", 2.0, 0.85),
+        ("ppo", "baseline", ":", 2.0, 0.85),
+    ]
+
+    def _sm(series):
+        return series.rolling(SMOOTH_W, center=True, min_periods=1).mean()
+
+    fig, axes = plt.subplots(2, 4, figsize=(24, 10))
+    col_titles = ["Replicas — LLMs", "Replicas — Baselines",
+                  "Tail Latency — LLMs", "Tail Latency — Baselines"]
 
     for row_idx, wl in enumerate(["CPU", "IO"]):
         wl_data = k8s_df[k8s_df["workload_type"] == wl]
 
-        for model in CORE_MODELS:
-            d = wl_data[(wl_data["model"] == model) & (wl_data["variant"] == "domain")].sort_values("step")
+        for model, variant, ls_style, lw, alpha in llm_styles:
+            d = wl_data[(wl_data["model"] == model) & (wl_data["variant"] == variant)].sort_values("step")
             if d.empty:
                 continue
             color = MODEL_COLORS[model]
-            axes[row_idx, 0].plot(d["step"], d["ready_replicas"], "-", color=color,
-                                  alpha=0.7, linewidth=1.5, label=_label(model))
-            axes[row_idx, 1].plot(d["step"], d["latency_p90_ms"], "-", color=color,
-                                  alpha=0.7, linewidth=1.5, label=_label(model))
-            axes[row_idx, 2].plot(d["step"], d["cpu_millicores"], "-", color=color,
-                                  alpha=0.7, linewidth=1.5, label=_label(model))
+            lab = _label(model)
+            axes[row_idx, 0].plot(d["step"], _sm(d["ready_replicas"]), ls_style, color=color,
+                                  alpha=alpha, linewidth=lw, label=lab)
+            axes[row_idx, 2].plot(d["step"], _sm(d["latency_p90_ms"]), ls_style, color=color,
+                                  alpha=alpha, linewidth=lw, label=lab)
 
-        for bm in ["hpa", "keda", "dqn", "ppo"]:
-            d = wl_data[(wl_data["model"] == bm) & (wl_data["variant"] == "baseline")].sort_values("step")
+        for model, variant, ls_style, lw, alpha in base_styles:
+            d = wl_data[(wl_data["model"] == model) & (wl_data["variant"] == variant)].sort_values("step")
             if d.empty:
                 continue
-            color = MODEL_COLORS.get(bm, "gray")
-            axes[row_idx, 0].plot(d["step"], d["ready_replicas"], "--", color=color,
-                                  alpha=0.6, linewidth=1, label=_label(bm))
-            axes[row_idx, 1].plot(d["step"], d["latency_p90_ms"], "--", color=color,
-                                  alpha=0.6, linewidth=1, label=_label(bm))
-            axes[row_idx, 2].plot(d["step"], d["cpu_millicores"], "--", color=color,
-                                  alpha=0.6, linewidth=1, label=_label(bm))
+            color = MODEL_COLORS.get(model, "gray")
+            lab = _label(model)
+            axes[row_idx, 1].plot(d["step"], _sm(d["ready_replicas"]), ls_style, color=color,
+                                  alpha=alpha, linewidth=lw, label=lab)
+            axes[row_idx, 3].plot(d["step"], _sm(d["latency_p90_ms"]), ls_style, color=color,
+                                  alpha=alpha, linewidth=lw, label=lab)
 
-        axes[row_idx, 1].axhline(y=SLA_MS, color="red", linestyle=":", alpha=0.5,
-                                  linewidth=1.5, label="SLA (200ms)")
+        for col in [2, 3]:
+            axes[row_idx, col].axhline(y=SLA_MS, color="red", linestyle=":", alpha=0.6,
+                                        linewidth=1.5, label="SLA (200ms)")
 
-        axes[row_idx, 0].set_ylabel(f"{wl}\nReady Replicas")
-        axes[row_idx, 1].set_ylabel("Latency P90 (ms)")
-        axes[row_idx, 2].set_ylabel("CPU (millicores)")
+        axes[row_idx, 0].set_ylabel(f"{wl} Workload\nReady Replicas")
+        axes[row_idx, 2].set_ylabel("Latency P90 (ms)")
 
-        for col in range(3):
-            axes[row_idx, col].legend(fontsize=6, ncol=2)
+        for col in range(4):
+            axes[row_idx, col].legend(fontsize=7, loc="upper right")
             axes[row_idx, col].grid(True, alpha=0.2)
             if row_idx == 1:
                 axes[row_idx, col].set_xlabel("Step (x60s)")
 
-    axes[0, 0].set_title("Replicas")
-    axes[0, 1].set_title("Tail Latency")
-    axes[0, 2].set_title("CPU Usage")
+    for col, title in enumerate(col_titles):
+        axes[0, col].set_title(title)
 
     fig.suptitle("K8s v2 Real Cluster — Time-Series (domain variant)", fontsize=14, y=1.01)
     plt.tight_layout()
@@ -736,7 +788,7 @@ def plot_llm_overhead(ls, dpi):
 def plot_sim_vs_real(ls, ks, dpi):
     from adjustText import adjust_text
 
-    fig, axes = plt.subplots(1, 2, figsize=(16, 7))
+    fig, axes = plt.subplots(1, 2, figsize=(18, 8))
     metrics = [
         ("sla_pct", "SLA Compliance (%)"),
         ("mean_latency", "Mean Latency P90 (ms)"),
@@ -754,13 +806,13 @@ def plot_sim_vs_real(ls, ks, dpi):
                 sim_val = sim_row[metric].values[0]
                 k8s_val = k8s_row["mean_latency"].values[0] if metric == "mean_latency" else k8s_row[metric].values[0]
 
-                ax.scatter(sim_val, k8s_val, s=100, c=MODEL_COLORS[model],
+                ax.scatter(sim_val, k8s_val, s=140, c=MODEL_COLORS[model],
                            marker=VARIANT_MARKERS.get(variant, "o"), alpha=0.85,
-                           edgecolors="white", linewidth=0.8, zorder=5)
+                           edgecolors="white", linewidth=1.0, zorder=5)
                 short_model = _label(model).split()[-1]
-                short_variant = VARIANT_LABELS.get(variant, variant)
+                short_variant = VARIANT_LABELS.get(variant, variant)[:3]
                 txt = ax.text(sim_val, k8s_val, f" {short_model}/{short_variant}",
-                              fontsize=6.5, ha="left", va="center")
+                              fontsize=7, ha="left", va="center")
                 texts.append(txt)
 
         for bm in BASELINES_LONG:
@@ -770,15 +822,15 @@ def plot_sim_vs_real(ls, ks, dpi):
                 continue
             sim_val = sim_row[metric].values[0]
             k8s_val = k8s_row["mean_latency"].values[0] if metric == "mean_latency" else k8s_row[metric].values[0]
-            ax.scatter(sim_val, k8s_val, s=200, c=MODEL_COLORS.get(bm, "gray"),
+            ax.scatter(sim_val, k8s_val, s=250, c=MODEL_COLORS.get(bm, "gray"),
                        marker="*", alpha=0.9, edgecolors="black", linewidth=0.5, zorder=6)
             txt = ax.text(sim_val, k8s_val, f" {_label(bm)}",
-                          fontsize=8, fontweight="bold", ha="left", va="center")
+                          fontsize=8.5, fontweight="bold", ha="left", va="center")
             texts.append(txt)
 
         lims_all = list(ax.get_xlim()) + list(ax.get_ylim())
         lo, hi = min(lims_all), max(lims_all)
-        pad = (hi - lo) * 0.05
+        pad = (hi - lo) * 0.08
         lo, hi = lo - pad, hi + pad
         ax.plot([lo, hi], [lo, hi], "k:", alpha=0.3, linewidth=1.5)
         ax.fill_between([lo, hi], [lo, hi], hi, alpha=0.04, color="green", label="Real > Sim")
@@ -790,20 +842,21 @@ def plot_sim_vs_real(ls, ks, dpi):
         ax.set_ylabel(f"Real Cluster (CPU) — {ylabel}")
         ax.grid(True, alpha=0.2)
 
-        adjust_text(texts, ax=ax, arrowprops=dict(arrowstyle="-", color="gray", alpha=0.4, lw=0.5),
-                    force_text=(0.6, 0.6), force_points=(0.4, 0.4), expand=(1.4, 1.4))
+        adjust_text(texts, ax=ax, arrowprops=dict(arrowstyle="-", color="gray", alpha=0.5, lw=0.5),
+                    force_text=(1.0, 1.0), force_points=(0.6, 0.6), expand=(1.8, 1.8),
+                    iterations=200)
 
     legend_elements = []
     for m in CORE_MODELS:
         legend_elements.append(Line2D([0], [0], marker="o", color="w", markerfacecolor=MODEL_COLORS[m],
-                                      markersize=8, label=_label(m)))
+                                      markersize=9, label=_label(m)))
     for m in BASELINES_LONG:
         legend_elements.append(Line2D([0], [0], marker="*", color="w", markerfacecolor=MODEL_COLORS.get(m, "gray"),
-                                      markersize=10, label=_label(m)))
+                                      markersize=11, label=_label(m)))
     for v in VARIANT_ORDER:
         legend_elements.append(Line2D([0], [0], marker=VARIANT_MARKERS[v], color="w",
-                                      markerfacecolor="gray", markersize=8, label=VARIANT_LABELS[v]))
-    axes[0].legend(handles=legend_elements, fontsize=7, ncol=3, loc="lower right")
+                                      markerfacecolor="gray", markersize=9, label=VARIANT_LABELS[v]))
+    axes[0].legend(handles=legend_elements, fontsize=8, ncol=3, loc="lower right")
 
     fig.suptitle("Simulation Fidelity: Simulated vs Real K8s Cluster (CPU Workload)", fontsize=14, y=1.01)
     plt.tight_layout()
@@ -866,7 +919,11 @@ def plot_radar_profiles(ls, dpi):
 # ═══════════════════════════════════════════════════════════════════════════
 
 def plot_variant_timeseries(long_df, dpi):
+    SMOOTH_W = 15
     fig, axes = plt.subplots(4, 2, figsize=(18, 16), sharex=True)
+
+    def _sm(series):
+        return series.rolling(SMOOTH_W, center=True, min_periods=1).mean()
 
     for col_idx, model in enumerate(["llama-8b", "qwen3-80b"]):
         for vi, variant in enumerate(VARIANT_ORDER):
@@ -874,19 +931,20 @@ def plot_variant_timeseries(long_df, dpi):
             if d.empty:
                 continue
             color = {"zero_shot": "#2196F3", "domain": "#4CAF50", "history_5": "#FF9800", "cot": "#E91E63"}[variant]
-            axes[vi, col_idx].plot(d["step"], d["ready_replicas"], "-", color=color,
-                                    alpha=0.7, linewidth=1, label="Replicas")
+            axes[vi, col_idx].plot(d["step"], _sm(d["ready_replicas"]), "-", color=color,
+                                    alpha=0.9, linewidth=2.0, label="Replicas")
             ax2 = axes[vi, col_idx].twinx()
-            ax2.plot(d["step"], d["latency_p90"], ":", color="red", alpha=0.5, linewidth=0.8, label="Latency P90")
-            ax2.axhline(y=SLA_MS, color="red", linestyle="--", alpha=0.3, linewidth=0.5)
-            ax2.set_ylabel("Latency (ms)", color="red", fontsize=8)
-            ax2.tick_params(axis="y", labelcolor="red", labelsize=7)
+            ax2.fill_between(d["step"], 0, _sm(d["latency_p90"]), color="red", alpha=0.08)
+            ax2.plot(d["step"], _sm(d["latency_p90"]), "-", color="red", alpha=0.6, linewidth=1.2, label="Latency P90")
+            ax2.axhline(y=SLA_MS, color="red", linestyle="--", alpha=0.4, linewidth=1.0)
+            ax2.set_ylabel("Latency (ms)", color="red", fontsize=9)
+            ax2.tick_params(axis="y", labelcolor="red", labelsize=8)
 
             axes[vi, col_idx].set_ylabel("Replicas")
             title = f"{_label(model)} — {VARIANT_LABELS[variant]}"
             sla_row = long_df[(long_df["llm_model"] == model) & (long_df["llm_variant"] == variant)]
             sla_val = (1 - (sla_row["latency_p90"] > SLA_MS).sum() / len(sla_row)) * 100
-            axes[vi, col_idx].set_title(f"{title}  (SLA={sla_val:.1f}%)", fontsize=9)
+            axes[vi, col_idx].set_title(f"{title}  (SLA={sla_val:.1f}%)", fontsize=10)
             axes[vi, col_idx].grid(True, alpha=0.2)
             axes[vi, col_idx].set_ylim(0, 21)
 
