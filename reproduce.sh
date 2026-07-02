@@ -8,11 +8,14 @@ cd "$(dirname "$0")"
 echo "== deps =="
 python3 -c "import pandas, numpy, matplotlib" 2>/dev/null || pip install -r requirements.txt
 
-echo "== regenerate plots + LaTeX tables + CSV summaries from results/ =="
+echo "== regenerate plots 1-16 + LaTeX tables + CSV summaries from results/ =="
 python3 plot_all.py
 
+echo "== regenerate LLM inference-time figures 16-17 + table =="
+python3 plot_inference_times.py
+
 echo
-echo "done -> plots/  (figures, LaTeX tables, CSV summaries)"
+echo "done -> plots/  (18 figures, LaTeX tables, CSV summaries)"
 echo
 echo "To re-run the experiments (needs provider keys + a Kubernetes cluster):"
 echo "  cp api_keys.conf.example api_keys.conf      # add NVIDIA/Groq/Cerebras keys"
