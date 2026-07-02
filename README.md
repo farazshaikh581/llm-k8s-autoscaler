@@ -224,6 +224,25 @@ All experiment results are stored as CSV files in the `results/` directory. Each
 - `llm_tokens_used` — tokens consumed per decision
 - `llm_latency_ms` — LLM inference latency
 
+## Reproducing
+
+Regenerate all figures, LaTeX tables, and CSV summaries from the committed
+result data:
+
+```bash
+pip install -r requirements.txt
+./reproduce.sh          # runs plot_all.py over results/ -> plots/
+```
+
+To re-run the experiments themselves (requires provider API keys and a
+Kubernetes cluster):
+
+```bash
+cp api_keys.conf.example api_keys.conf   # add NVIDIA / Groq / Cerebras keys
+scripts/run_long.sh                       # 1440-step simulation
+scripts/run_k8s_v2.sh                     # real-cluster experiment
+```
+
 ## License
 
 All rights reserved. See [LICENSE](LICENSE) for details.
