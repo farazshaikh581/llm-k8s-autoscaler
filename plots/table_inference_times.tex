@@ -1,0 +1,46 @@
+\begin{table}[t]
+\centering
+\small
+\caption{Decision inference latency across autoscaling approaches. LLM values are per-step means over 1440 steps (Alibaba trace). RL and rule-based baselines have sub-millisecond latency. Edge-viable threshold: $<$100\,ms; cloud-viable: $<$1\,s.}
+\label{tab:inference-times}
+\begin{tabular}{llrrrr}
+\toprule
+Model & Variant & Mean (ms) & Median (ms) & P95 (ms) & P99 (ms) \\
+\midrule
+Llama 3.1 8B & Zero-Shot & 472 & 381 & 654 & 2931 \\
+Llama 3.1 8B & Domain & 464 & 384 & 596 & 2833 \\
+Llama 3.1 8B & History-5 & 485 & 390 & 616 & 3028 \\
+Llama 3.1 8B & CoT & 481 & 395 & 679 & 2915 \\
+\midrule
+Llama 3.3 70B & Zero-Shot & 5748 & 1195 & 20639 & 34001 \\
+Llama 3.3 70B & Domain & 13552 & 686 & 38711 & 320289 \\
+Llama 3.3 70B & History-5 & 16081 & 1136 & 34294 & 331744 \\
+Llama 3.3 70B & CoT & 37925 & 22333 & 86899 & 377028 \\
+\midrule
+Mistral Small 4 & Zero-Shot & 402 & 224 & 1523 & 1702 \\
+Mistral Small 4 & Domain & 426 & 219 & 1549 & 1675 \\
+Mistral Small 4 & History-5 & 489 & 256 & 1569 & 1711 \\
+Mistral Small 4 & CoT & 453 & 267 & 1551 & 1752 \\
+\midrule
+Qwen 3 80B & Zero-Shot & 1361 & 581 & 2970 & 9014 \\
+Qwen 3 80B & Domain & 675 & 482 & 1532 & 3464 \\
+Qwen 3 80B & History-5 & 700 & 474 & 1886 & 3908 \\
+Qwen 3 80B & CoT & 769 & 518 & 1724 & 3525 \\
+\midrule
+Scout 17B & Zero-Shot & 207 & 110 & 654 & 1413 \\
+Scout 17B & Domain & 347 & 144 & 1384 & 2625 \\
+Scout 17B & History-5 & 587 & 350 & 1992 & 3570 \\
+Scout 17B & CoT & 1501 & 1269 & 2800 & 4399 \\
+\midrule
+GPT-OSS 120B & Zero-Shot & 2682 & 498 & 3685 & 55692 \\
+GPT-OSS 120B & Domain & 785 & 495 & 850 & 3504 \\
+GPT-OSS 120B & History-5 & 2289 & 512 & 1073 & 54745 \\
+GPT-OSS 120B & CoT & 2602 & 522 & 3955 & 54798 \\
+\midrule
+DQN (RL) & --- & $<$1 & $<$1 & $<$1 & $<$1 \\
+PPO (RL) & --- & $<$1 & $<$1 & $<$1 & $<$1 \\
+HPA & --- & $<$1 & $<$1 & $<$1 & $<$1 \\
+KEDA & --- & $<$1 & $<$1 & $<$1 & $<$1 \\
+\bottomrule
+\end{tabular}
+\end{table}
