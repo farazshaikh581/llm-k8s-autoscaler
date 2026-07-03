@@ -14,8 +14,11 @@ python3 plot_all.py
 echo "== regenerate LLM inference-time figures 16-17 + table =="
 python3 plot_inference_times.py
 
+echo "== sim-vs-real validation: figure 19 + error summary =="
+python3 validate_sim.py
+
 echo
-echo "done -> plots/  (18 figures, LaTeX tables, CSV summaries)"
+echo "done -> plots/  (19 figures, LaTeX tables, CSV summaries)"
 echo
 echo "To re-run the experiments (needs provider keys + a Kubernetes cluster):"
 echo "  cp api_keys.conf.example api_keys.conf      # add NVIDIA/Groq/Cerebras keys"

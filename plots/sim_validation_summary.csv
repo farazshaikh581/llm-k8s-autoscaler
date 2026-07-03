@@ -1,0 +1,7 @@
+model,metric,mae,median_ae,bias,sla_agreement
+pre-rework,latency_p90_ms,304.46,56.4,184.851,0.885
+pre-rework,cpu_pct,17.238,12.033,15.751,
+pre-rework,success_rate,0.032,0.0,-0.031,
+hardened,latency_p90_ms,65.51,20.6,-23.093,0.917
+hardened,cpu_pct,9.708,6.563,-6.33,
+hardened,success_rate,0.006,0.0,-0.004,

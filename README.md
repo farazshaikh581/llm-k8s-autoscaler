@@ -148,7 +148,7 @@ python plot_all.py              # standard quality
 python plot_all.py --dpi 300    # publication quality
 ```
 
-This generates 18 plots, 3 LaTeX tables, and 2 summary CSVs in the `plots/` directory.
+This generates 18 plots, 3 LaTeX tables, and 2 summary CSVs in the `plots/` directory. Plot 19 (simulator validation) is generated separately by `validate_sim.py`, which replays both the pre-rework and the hardened performance model against every observed real-cluster operating point (`results/k8s_v2`, CPU workload) and writes the error summary to `plots/sim_validation_summary.csv`.
 
 ## Plots
 
@@ -172,6 +172,7 @@ This generates 18 plots, 3 LaTeX tables, and 2 summary CSVs in the `plots/` dire
 | 16 | Inference Latency | Decision latency across all autoscaling approaches |
 | 17 | Inference Feasibility | Feasibility ratio across decision intervals (1s-60s) |
 | 18 | Infrastructure Cost | vCPU-minutes per method vs HPA baseline with SLA annotations |
+| 19 | Simulator Validation | Pre-rework vs hardened model replayed against real-cluster bins (latency, CPU, pred-vs-obs) |
 
 ## Infrastructure
 
