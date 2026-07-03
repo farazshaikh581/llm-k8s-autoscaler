@@ -2,12 +2,16 @@
 """LLM as Zero-Shot Kubernetes Autoscaler — simulation on Alibaba Cluster Trace 2018.
 
 Infrastructure model:
-  - Cluster: 5 worker nodes, 4 vCPU / 8 GiB each
-  - Pod spec: 500m CPU request, 512 MiB RAM, max 20 replicas
+  - Cluster: 5 worker nodes, 4 vCPU / 8 GiB each, per-node system reserve
+  - Pod spec: 250m CPU request / 500m limit (mirrors k8s/deployment.yaml),
+    max 20 replicas, node scheduling enforced by CPU request
   - Startup delay: new replicas take 30s (~0.5 step) to become ready
   - Scale cooldown: 60s (1 step) between scale events (matches real HPA)
-  - Latency: M/M/c queuing model (Erlang-C)
-  - Cost tracked in vCPU-minutes
+  - Queueing: M/M/c/K with finite per-pod buffers (real losses) and
+    requests/limits-aware service rates under CFS throttling; latency P90
+    from the exact waiting-time mixture, calibrated on the real testbed
+    (see the queueing-model section for the measured constants)
+  - Cost tracked in vCPU-minutes of reserved capacity (requests)
 
 Uses free-tier APIs: Groq (open-source LLMs).
 """
@@ -34,20 +38,34 @@ CLUSTER = {
     "nodes": 5,
     "vcpu_per_node": 4,
     "ram_gb_per_node": 8,
+    "system_reserved_m": 500,   # kubelet + system daemons per node
 }
 
+# Pod resources mirror k8s/deployment.yaml exactly (guaranteed vs burstable).
 POD = {
-    "cpu_request_m": 500,    # 500m = 0.5 vCPU
-    "ram_request_mi": 512,
-    "max_per_node": 7,       # floor(4000m / 500m) = 8, leave 1 for system
+    "cpu_request_m": 250,    # guaranteed share (CFS weight)
+    "cpu_limit_m": 500,      # hard CFS quota for sustained usage
+    "ram_request_mi": 128,
+    "ram_limit_mi": 256,
 }
 
 REPLICA_MIN, REPLICA_MAX = 1, 20
 STARTUP_DELAY_STEPS = 1     # new replicas need 1 step (60s) to become ready
 SCALE_COOLDOWN_STEPS = 1    # min steps between scale events
 
-SERVICE_TIME_MS = 8.0       # mean processing time per request (fast microservice)
-CAPACITY_PER_REPLICA = 200  # req/min at ~50% CPU target
+# Service model calibrated on the real testbed (results/k8s_v2, CPU workload,
+# 2414 steps): cpu_millicores/rps slope gives the CPU demand per request; the
+# observed low-load P90 floor of ~47 ms splits into that demand (unthrottled
+# burst within one CFS period) plus network/HTTP overhead.
+CPU_DEMAND_MS = 35.0        # ms·core of CPU work per request (measured)
+BASE_OVERHEAD_MS = 12.0     # network + HTTP handling floor (measured)
+SERVICE_CV2 = 0.1           # sha256 loop is near-deterministic
+ARRIVAL_CV2 = 4.0           # within-minute burstiness of arrivals (trace-driven
+                            # load is far from Poisson; fitted to testbed)
+QUEUE_PER_POD = 5           # socketserver.TCPServer request_queue_size default
+CFS_BURST_SHARE = 0.25      # sustained fraction of node headroom usable above
+                            # the request (CFS throttling; fitted to testbed)
+
 SLA_LATENCY_MS = 200.0      # P90 latency SLA threshold
 CRITICAL_LATENCY_MS = 500.0
 
@@ -257,62 +275,168 @@ def generate_synthetic_trace(duration_minutes: int = 1440, seed: int = 42) -> np
     return rps
 
 # ---------------------------------------------------------------------------
-# M/M/c queuing model (Erlang-C)
+# Queueing model: per-pod M/M/1/K with requests/limits-aware service rates
+#
+# Structure (each piece traceable to the real testbed):
+#   - Node scheduling: pods spread evenly across nodes; per-node allocatable
+#     CPU = vcpu_per_node - system_reserved; scheduling is by CPU request.
+#   - Effective sustained CPU per pod: the request (guaranteed) plus a CFS
+#     throttled share of the node headroom, capped at the limit. This is what
+#     the peak-vs-default rate distinction requires: a pod's default rate
+#     comes from its request, its peak rate from its limit.
+#   - Service time: CPU_DEMAND_MS at full speed when the CFS quota is not
+#     exhausted (short bursts run unthrottled), stretching toward
+#     CPU_DEMAND_MS / (cpu_m/1000) as sustained utilization rises.
+#   - Queue placement: a k8s Service load-balances connections across pods;
+#     there is NO shared queue, so the system is c parallel M/M/1/K queues
+#     each fed lambda/c, not a pooled M/M/c. K = 1 + QUEUE_PER_POD is the
+#     pod's TCP listen backlog. Arrivals that find the backlog full are
+#     lost: genuine SLA-loss events, impossible in an infinite-queue M/M/c.
+#   - Latency: the exact M/M/1/K stationary distribution gives the
+#     waiting-time mixture for accepted requests (Erlang stages); the P90 is
+#     found by bisection on the mixture survival function, scaled by the
+#     Sakasegawa/Allen-Cunneen factor (ca^2 + cs^2)/2 for bursty arrivals
+#     over near-deterministic service.
 # ---------------------------------------------------------------------------
 
-def erlang_c(c: int, offered_load: float) -> float:
-    """Probability that an arriving request must wait (Erlang-C formula)."""
-    if c <= 0 or offered_load <= 0:
-        return 0.0
-    rho = offered_load / c
-    if rho >= 1.0:
-        return 1.0
+def pods_per_node_max() -> int:
+    """Max pods a node can host, by CPU request (bin-packing constraint)."""
+    allocatable_m = CLUSTER["vcpu_per_node"] * 1000 - CLUSTER["system_reserved_m"]
+    return allocatable_m // POD["cpu_request_m"]
 
-    # compute in log space for numerical stability
-    log_numerator = c * math.log(offered_load) - math.lgamma(c + 1) - math.log(1 - rho)
-    log_sum = 0.0
-    terms = []
-    for k in range(c):
-        terms.append(k * math.log(offered_load) - math.lgamma(k + 1))
-    terms.append(log_numerator)
-    max_term = max(terms)
-    log_denominator = max_term + math.log(sum(math.exp(t - max_term) for t in terms))
-    return math.exp(log_numerator - log_denominator)
+
+def schedulable_max() -> int:
+    """Hard replica ceiling: the deployment cap or node capacity, whichever
+    binds first. Keeps the sim from ever exceeding what the cluster can run."""
+    return min(REPLICA_MAX, CLUSTER["nodes"] * pods_per_node_max())
+
+
+def effective_cpu_m(replicas: int) -> float:
+    """Sustained CPU (millicores) available to each pod.
+
+    Pods are spread evenly (k8s default topology spread); the most loaded
+    node determines the contended share. Each pod is guaranteed its request;
+    on top of that it can sustain only a CFS_BURST_SHARE fraction of its fair
+    share of the node headroom, never exceeding its limit.
+    """
+    pods_on_node = max(1, math.ceil(replicas / CLUSTER["nodes"]))
+    allocatable_m = CLUSTER["vcpu_per_node"] * 1000 - CLUSTER["system_reserved_m"]
+    headroom_m = max(0.0, allocatable_m - pods_on_node * POD["cpu_request_m"])
+    burst_m = CFS_BURST_SHARE * headroom_m / pods_on_node
+    return min(POD["cpu_limit_m"], POD["cpu_request_m"] + burst_m)
+
+
+def service_time_s(lambda_pod: float, cpu_m: float) -> float:
+    """Mean service time per request (seconds) for a pod sustaining cpu_m.
+
+    Interpolates between the unthrottled burst regime (an isolated request's
+    CPU burst fits inside one CFS period and runs at core speed) and the
+    fully throttled regime (sustained demand pinned to cpu_m). The throttled
+    fraction grows with the pod's own utilization; solved as a fixed point
+    since utilization depends on the service time itself.
+    """
+    s_burst = CPU_DEMAND_MS / 1000.0
+    s_sustained = (CPU_DEMAND_MS / 1000.0) * (1000.0 / cpu_m)
+    s = s_burst
+    for _ in range(30):
+        rho = min(lambda_pod * s, 1.0)
+        s_new = s_burst + (s_sustained - s_burst) * rho
+        if abs(s_new - s) < 1e-9:
+            break
+        s = s_new
+    return s
+
+
+def _erlang_sf(k: int, rate: float, t: float) -> float:
+    """P(Erlang(k, rate) > t) via the Poisson series (exact, k integer)."""
+    if t <= 0:
+        return 1.0
+    x = rate * t
+    term = math.exp(-x)
+    total = term
+    for i in range(1, k):
+        term *= x / i
+        total += term
+    return min(1.0, total)
+
+
+def mmck_distribution(c: int, K: int, a: float) -> list[float]:
+    """Stationary distribution p_0..p_K of M/M/c/K, offered load a = λ/μ.
+
+    Computed in log space for numerical stability at large c and load.
+    """
+    logs = []
+    for n in range(0, min(c, K) + 1):
+        logs.append(n * math.log(a) - math.lgamma(n + 1) if a > 0 else (0.0 if n == 0 else -math.inf))
+    log_rho = math.log(a / c) if a > 0 else -math.inf
+    for n in range(c + 1, K + 1):
+        logs.append(logs[c] + (n - c) * log_rho)
+    m = max(logs)
+    weights = [math.exp(x - m) for x in logs]
+    z = sum(weights)
+    return [w / z for w in weights]
 
 
 def compute_metrics(ready_replicas: int, rps: int) -> dict:
-    """Empirical utilization-based performance model.
+    """Performance model for one step: c parallel M/M/1/K pod queues.
 
-    Latency curve calibrated to real microservice behavior:
-      ~20ms at 30% CPU, ~50ms at 60%, ~200ms at 80%, >500ms at 90%+
-    This matches published measurements from cloud autoscaling studies.
+    rps is the request rate for the step in requests/minute (trace units).
+    Returns latency P90 (ms), success rate (1 - blocking), and CPU
+    utilization measured HPA-style against the pod request.
     """
     c = max(ready_replicas, 1)
-    total_capacity = c * CAPACITY_PER_REPLICA
-    rho = min(rps / max(total_capacity, 1), 2.0)  # utilization ratio
+    lam = rps / 60.0                    # requests/second, system-wide
+    lam_pod = lam / c                   # Service LB splits load across pods
+    cpu_m = effective_cpu_m(c)
 
-    cpu_pct = round(min(rho * 100.0, 100.0), 1)
+    s = service_time_s(lam_pod, cpu_m)  # mean service time per request
+    mu = 1.0 / s
+    K = 1 + QUEUE_PER_POD               # 1 in service + TCP listen backlog
 
-    # Latency P90: continuous utilization curve, calibrated to real services.
-    # SLA (200ms) is breached around 95-100% utilization.
-    if rho <= 1.0:
-        queue_factor = (rho / (1.0 - rho + 0.1)) ** 1.5
-        latency_p90 = SERVICE_TIME_MS * (1.0 + queue_factor)
+    p = mmck_distribution(1, K, lam_pod / mu)
+    p_block = p[K]
+    success = 1.0 - p_block
+
+    # Waiting time of *accepted* requests at one pod: an arrival finding
+    # n >= 1 in the system (n < K) waits Erlang(n, mu). P90 by bisection on
+    # the mixture survival function, scaled by the Allen-Cunneen burstiness
+    # factor (ca^2 + cs^2)/2 since arrivals are far from Poisson-smooth
+    # within a step.
+    accept = 1.0 - p_block
+    q_wait = [(n, p[n] / accept) for n in range(1, K) if p[n] > 0.0]
+    p_wait_total = sum(q for _, q in q_wait)
+    correction = (ARRIVAL_CV2 + SERVICE_CV2) / 2.0
+
+    if p_wait_total <= 0.10:
+        wq_p90 = 0.0
     else:
-        # above capacity: exponential degradation from the value at ρ=1.0
-        lat_at_capacity = SERVICE_TIME_MS * (1.0 + (1.0 / 0.1) ** 1.5)
-        latency_p90 = lat_at_capacity * math.exp(3.0 * (rho - 1.0))
+        def sf(t: float) -> float:
+            return sum(q * _erlang_sf(n, mu, t) for n, q in q_wait)
+        lo, hi = 0.0, 1.0
+        while sf(hi) > 0.10 and hi < 600.0:
+            hi *= 2.0
+        for _ in range(60):
+            mid = (lo + hi) / 2.0
+            if sf(mid) > 0.10:
+                lo = mid
+            else:
+                hi = mid
+        wq_p90 = ((lo + hi) / 2.0) * correction
 
-    jitter = 1.0 + np.random.normal(0, 0.05)
-    latency_p90 = round(max(SERVICE_TIME_MS, min(latency_p90 * jitter, 10000.0)), 1)
+    # Service is near-deterministic (fixed sha256 loop), so the P90 of the
+    # sojourn composes the wait quantile with the mean service time plus the
+    # measured constant overhead. At idle this reproduces the observed
+    # ~47 ms floor (35 ms demand + 12 ms overhead).
+    latency_p90 = (wq_p90 + s) * 1000.0 + BASE_OVERHEAD_MS
+    jitter = 1.0 + np.random.normal(0, 0.03)
+    latency_p90 = round(min(latency_p90 * jitter, 10000.0), 1)
 
-    if rho <= 1.0:
-        success = 1.0
-    elif rho <= 1.3:
-        success = 1.0 - 0.5 * (rho - 1.0)
-    else:
-        success = max(0.3, 0.85 - 0.5 * (rho - 1.3))
+    # HPA-style CPU%: actual usage of served traffic against the request.
+    used_m_per_pod = lam_pod * success * CPU_DEMAND_MS
+    cpu_pct = round(min(used_m_per_pod / POD["cpu_request_m"] * 100.0,
+                        POD["cpu_limit_m"] / POD["cpu_request_m"] * 100.0), 1)
 
+    rho = lam_pod * s
     return {
         "cpu_pct": cpu_pct,
         "latency_p90": latency_p90,
@@ -364,19 +488,27 @@ class ClusterState:
                 self.ready_replicas = target
                 self._pending_scale = None
 
-        # cost: each ready replica uses 0.5 vCPU for 1 minute
+        # cost: reserved capacity, i.e. each ready replica's CPU request
         self.cumulative_vcpu_min += self.ready_replicas * (POD["cpu_request_m"] / 1000.0)
 
 # ---------------------------------------------------------------------------
 # Prompt construction
 # ---------------------------------------------------------------------------
 
+# Per-pod throughput derived from the calibrated service model, so the
+# numbers quoted to the LLM always match what the simulator implements.
+POD_RATE_GUARANTEED = int(round(60000.0 / (CPU_DEMAND_MS * 1000.0 / POD["cpu_request_m"]), -1))
+POD_RATE_PEAK = int(round(60000.0 / (CPU_DEMAND_MS * 1000.0 / POD["cpu_limit_m"]), -1))
+
 SYSTEM_PROMPT = (
     "You are a Kubernetes HPA controller. You manage pod replicas for a web "
-    "service running on a 5-node cluster (4 vCPU, 8 GiB per node). Each pod "
-    "requests 500m CPU and handles ~200 req/min at 50% CPU. SLA: P90 latency "
-    "< 200ms. Respond with ONLY a JSON object: {\"replicas\": N} where N is "
-    "an integer between 1 and 20. No other text."
+    f"service running on a {CLUSTER['nodes']}-node cluster "
+    f"({CLUSTER['vcpu_per_node']} vCPU, {CLUSTER['ram_gb_per_node']} GiB per node). "
+    f"Each pod requests {POD['cpu_request_m']}m CPU (limit {POD['cpu_limit_m']}m) and "
+    f"sustains ~{POD_RATE_GUARANTEED} req/min guaranteed, up to ~{POD_RATE_PEAK} req/min "
+    "when it can burst. SLA: P90 latency < 200ms. Respond with ONLY a JSON "
+    "object: {\"replicas\": N} where N is an integer between 1 and "
+    f"{REPLICA_MAX}. No other text."
 )
 
 
@@ -420,12 +552,15 @@ def build_prompt_cot(state: dict) -> str:
 def build_prompt_domain(state: dict) -> str:
     return (
         "Capacity & scaling rules for this cluster:\n"
-        "- Each pod handles ~200 req/min at 50% CPU (500m request on 4-vCPU nodes).\n"
+        f"- Each pod sustains ~{POD_RATE_GUARANTEED} req/min guaranteed "
+        f"({POD['cpu_request_m']}m CPU request), bursting to ~{POD_RATE_PEAK} req/min "
+        f"({POD['cpu_limit_m']}m limit) only when its node has spare CPU.\n"
         "- SLA: P90 latency must stay below 200ms. Above 500ms = critical.\n"
+        "- CPU% is measured against the request; >100% means the pod is bursting.\n"
         "- Target CPU: 40-60%. Scale up at >65%, scale down at <30%.\n"
         "- New pods take ~30s to start. Avoid thrashing: max ±3 replicas per step.\n"
         "- Over-provisioning wastes vCPU-hours. Under-provisioning drops requests.\n"
-        "- With 5 nodes × 4 vCPU, max feasible is ~35 pods but we cap at 20.\n\n"
+        f"- Replicas are capped at {REPLICA_MAX}.\n\n"
         + build_prompt_zero_shot(state)
     )
 
