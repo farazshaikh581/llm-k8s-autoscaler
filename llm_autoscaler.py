@@ -457,8 +457,12 @@ class ClusterState:
         self.cumulative_vcpu_min = 0.0
 
     def request_scale(self, desired: int, current_step: int) -> tuple[int, bool]:
-        """Request a scale change. Returns (actual_target, scale_event_bool)."""
-        desired = max(REPLICA_MIN, min(REPLICA_MAX, desired))
+        """Request a scale change. Returns (actual_target, scale_event_bool).
+
+        The target is clamped to what the cluster can actually schedule
+        (deployment cap AND per-node CPU-request capacity), so the sim can
+        never run more pods than the real testbed could."""
+        desired = max(REPLICA_MIN, min(schedulable_max(), desired))
 
         # enforce cooldown
         if current_step - self._last_scale_step < SCALE_COOLDOWN_STEPS:
@@ -560,7 +564,9 @@ def build_prompt_domain(state: dict) -> str:
         "- Target CPU: 40-60%. Scale up at >65%, scale down at <30%.\n"
         "- New pods take ~30s to start. Avoid thrashing: max ±3 replicas per step.\n"
         "- Over-provisioning wastes vCPU-hours. Under-provisioning drops requests.\n"
-        f"- Replicas are capped at {REPLICA_MAX}.\n\n"
+        f"- Replicas are capped at {schedulable_max()} "
+        f"({CLUSTER['nodes']} nodes x {CLUSTER['vcpu_per_node']} vCPU, "
+        "minus system reserve).\n\n"
         + build_prompt_zero_shot(state)
     )
 
@@ -638,7 +644,10 @@ def hpa_decision(cpu_pct: float, current_replicas: int, target_cpu: float = 50.0
     return max(REPLICA_MIN, min(REPLICA_MAX, desired))
 
 
-def keda_decision(rps: int, current_replicas: int, threshold: int = 200) -> int:
+def keda_decision(rps: int, current_replicas: int, threshold: int | None = None) -> int:
+    if threshold is None:
+        # target req/min per replica: 50% of the guaranteed (request-level) rate
+        threshold = int(0.5 * 60000.0 / (CPU_DEMAND_MS * 1000.0 / POD["cpu_request_m"]))
     desired = int(math.ceil(rps / threshold))
     return max(REPLICA_MIN, min(REPLICA_MAX, desired))
 
