@@ -152,6 +152,8 @@ def summarize(path: Path, label: str) -> dict:
 
 def main():
     parser = argparse.ArgumentParser(description="Train RL on the hardened sim")
+    parser.add_argument("--algo", choices=["DQN", "PPO", "both"], default="both",
+                        help="train one algorithm (lets DQN and PPO run in parallel)")
     parser.add_argument("--timesteps", type=int, default=500_000)
     parser.add_argument("--trace", type=str,
                         default=str(SCRIPT_DIR / "traces" / "trace_alibaba_v2.npy"))
@@ -171,8 +173,9 @@ def main():
     print(f"Train trace:  {len(train_trace)} steps, RPS [{train_trace.min()}, {train_trace.max()}]")
     print(f"Held-out:     {len(test_indist)} steps, RPS [{test_indist.min()}, {test_indist.max()}]")
 
+    algos = ["DQN", "PPO"] if args.algo == "both" else [args.algo]
     all_results = {}
-    for algo in ["DQN", "PPO"]:
+    for algo in algos:
         model, train_time = train(algo, train_trace, args.timesteps, models_dir)
         print(f"\nEvaluating {algo}:")
         r_full = evaluate(model, algo, full_trace, output_dir)
