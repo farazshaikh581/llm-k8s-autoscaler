@@ -175,12 +175,33 @@ This generates 18 plots, 3 LaTeX tables, and 2 summary CSVs in the `plots/` dire
 
 ## Infrastructure
 
-### Simulation Environment
-- Cluster: 5 worker nodes, 4 vCPU / 8 GiB each
-- Pod spec: 500m CPU request, 512 MiB RAM, max 20 replicas
-- Latency model: M/M/c queuing (Erlang-C)
-- Startup delay: 30s for new replicas
-- Scale cooldown: 60s between events
+### Simulation Model (`llm_autoscaler.py`)
+
+The simulator reproduces the real testbed as closely as the calibration data allows. One decision step corresponds to one minute of wall-clock time. All constants below live at the top of `llm_autoscaler.py`; `tests/test_sim_model.py` (16 tests) checks the queueing invariants.
+
+**Cluster and pod resources.** 5 worker nodes with 4 vCPU / 8 GiB each; 500m per node reserved for kubelet and system daemons. Pod resources mirror `k8s/deployment.yaml` exactly: 250m CPU request / 500m limit, 128/256 MiB RAM, replica range 1 to 20.
+
+**Scheduling and capacity.** Replica targets are clamped to what the cluster can actually schedule: bin-packing by CPU request gives 14 pods per node, so the hard ceiling is min(deployment cap 20, 5 x 14 = 70) = 20. Pods spread evenly across nodes (Kubernetes default topology spread). Each pod is guaranteed its 250m request; above that it can sustain only 25% of its fair share of node headroom (`CFS_BURST_SHARE`, fitted to the testbed), never exceeding its 500m limit. This models CFS throttling of burstable pods.
+
+**Service model, calibrated on the testbed.** Each request costs 35 ms-core of CPU (`CPU_DEMAND_MS`) plus a 12 ms network/HTTP floor (`BASE_OVERHEAD_MS`). Both were measured from the real-cluster CPU-workload runs (`results/k8s_v2`, 2414 steps): the millicores/RPS slope gives the per-request demand, and the observed low-load P90 floor of ~47 ms splits into demand plus overhead. Mean service time interpolates between the unthrottled burst regime (an isolated request runs at core speed) and the fully throttled regime (pinned to the pod's sustainable millicores), solved as a fixed point since the throttled fraction depends on the pod's own utilization.
+
+**Queueing: per-pod M/M/1/K with genuine losses.** The Service load balancer splits arrivals evenly across ready pods; each pod is an M/M/1/K queue with K = 6 (one request in service plus a listen backlog of 5, the Python `socketserver.TCPServer` default used by the testbed workload). Arrivals that find the buffer full are lost, so `success_rate = 1 - P(block)` reflects real rejections rather than an assumption of lossless queueing. The P90 waiting time of accepted requests is computed from the Erlang mixture over queue states and scaled by the Allen-Cunneen burstiness factor (arrival CV^2 = 4.0, fitted to within-minute trace burstiness; service CV^2 = 0.1, the workload is near-deterministic). Reported latency is P90 wait + mean service + overhead, with 3% multiplicative jitter.
+
+**Actuation dynamics.** Scale-ups take one step (60 s) before new pods are ready; scale-downs are immediate. A 60 s cooldown separates scale events. Cost accrues as reserved capacity: ready replicas x 250m per minute (vCPU-minutes). CPU% is reported HPA-style, actual usage of served traffic against the pod request.
+
+**Baselines share the same capacity model.** HPA scales by `ceil(replicas x cpu% / 50%)`. KEDA scales on RPS with a per-replica threshold of 214 req/min, defined as 50% of the guaranteed per-pod rate (430 req/min) that follows from the calibrated service model and the CPU request. The capacity figures quoted to the LLM in the `domain` prompt (430 req/min guaranteed, 860 req/min peak) are derived from the same constants, so every controller reasons over a consistent cluster.
+
+**Model history.** The original simulator used a lossless M/M/c (Erlang-C) latency model with hand-tuned penalty curves and no notion of requests/limits or node capacity (issues #1 to #4). It was replaced in July 2026 by the calibrated model above. Simulation results produced before the rework are kept for reference in `results/short_sim` and `results/long_sim`; regenerated long-simulation results from the hardened model replace them for the paper. The RL training environment (`autoscale_env_v2.py`) still implements the pre-rework dynamics; porting it is tracked in issue #7.
+
+### Simulation Runs
+
+| Run | Steps | Trace | Simulator | Location |
+|-----|-------|-------|-----------|----------|
+| Short sim | 150 | Alibaba (`trace_alibaba_v2.npy`) | pre-rework (archived) | `results/short_sim` |
+| Long sim | 1440 (24 h) | Alibaba (`trace_alibaba_v2.npy`) | pre-rework (archived) | `results/long_sim` |
+| Long sim v2 | 1440 (24 h) | Alibaba (`trace_alibaba_v2.npy`) | hardened (this model) | regeneration in progress |
+
+Each long-sim run covers 6 models x 4 prompt variants plus HPA/KEDA baselines. LLM decisions are made once per step from a plain-text cluster state; `temperature=0` makes each controller a deterministic policy.
 
 ### Real Kubernetes Cluster
 - k3s v1.35.5
@@ -212,7 +233,7 @@ The raw `machine_usage.csv` is not included in this repository due to size (~30 
 
 All experiment results are stored as CSV files in the `results/` directory.
 
-> **Note:** the simulation results and plots currently in the repository were produced with the previous utilization-curve performance model. The queueing model is being reworked for higher fidelity to the testbed (see the simulation-fidelity issues); simulation results will be regenerated once that work lands. Real-cluster results (`results/k8s_v1`, `results/k8s_v2`) are unaffected.
+> **Note:** the simulation results and plots currently in the repository were produced with the pre-rework performance model (see Model history under [Simulation Model](#simulation-model-llm_autoscalerpy)). The hardened simulator has landed and the 1440-step suite is being re-run with it; regenerated results and plots will replace the archived ones. Real-cluster results (`results/k8s_v1`, `results/k8s_v2`) are unaffected. RL baselines are pending the environment port (issue #7).
 
 Each row represents one autoscaling decision step with columns for:
 
