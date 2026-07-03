@@ -210,7 +210,11 @@ The raw `machine_usage.csv` is not included in this repository due to size (~30 
 
 ## Experiment Results
 
-All experiment results are stored as CSV files in the `results/` directory. Each row represents one autoscaling decision step with columns for:
+All experiment results are stored as CSV files in the `results/` directory.
+
+> **Note:** the simulation results and plots currently in the repository were produced with the previous utilization-curve performance model. The queueing model is being reworked for higher fidelity to the testbed (see the simulation-fidelity issues); simulation results will be regenerated once that work lands. Real-cluster results (`results/k8s_v1`, `results/k8s_v2`) are unaffected.
+
+Each row represents one autoscaling decision step with columns for:
 
 - `step` — time step index
 - `replicas` / `ready_replicas` — target and actual replica count
