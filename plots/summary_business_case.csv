@@ -3,6 +3,7 @@ gpt-oss-120b_history_5,gpt-oss-120b_history_5,LLM,gpt-oss-120b,history_5,66.9,35
 gpt-oss-120b_cot,gpt-oss-120b_cot,LLM,gpt-oss-120b,cot,85.7,195.2,1116,272,391
 gpt-oss-120b_zero_shot,gpt-oss-120b_zero_shot,LLM,gpt-oss-120b,zero_shot,91.5,166.3,1220,297,406
 gpt-oss-120b_domain,gpt-oss-120b_domain,LLM,gpt-oss-120b,domain,86.2,214.0,1538,374,115
+llama4-scout_cot,llama4-scout_cot,LLM,llama4-scout,cot,81.0,159.5,1726,420,921
 qwen3-80b_domain,qwen3-80b_domain,LLM,qwen3-80b,domain,99.5,84.9,1829,445,252
 mistral-small4_zero_shot,mistral-small4_zero_shot,LLM,mistral-small4,zero_shot,99.5,84.5,1869,455,166
 hpa_baseline,HPA,HPA,hpa_baseline,,100.0,74.4,1944,473,417
