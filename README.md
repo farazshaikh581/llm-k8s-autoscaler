@@ -173,6 +173,11 @@ This generates 18 plots, 3 LaTeX tables, and 2 summary CSVs in the `plots/` dire
 | 17 | Inference Feasibility | Feasibility ratio across decision intervals (1s-60s) |
 | 18 | Infrastructure Cost | vCPU-minutes per method vs HPA baseline with SLA annotations |
 | 19 | Simulator Validation | Pre-rework vs hardened model replayed against real-cluster bins (latency, CPU, pred-vs-obs) |
+| 20 | Business: Latency vs Cost | Latency-SLA and annualized cost per representative config, cost as a first-class objective |
+| 21 | Business: Cost vs Stability | Cost against scaling-churn at matched SLA (≥99%) |
+| 22 | Business: Stability | Scaling actions over 24 h — LLMs 6–20× more stable than HPA/KEDA |
+
+See [`BUSINESS_CASE.md`](BUSINESS_CASE.md) for the cost model, the two business regimes, and the honest framing (LLM edge is cost-at-matched-SLA plus stability, not raw SLA dominance).
 
 ## Infrastructure
 
