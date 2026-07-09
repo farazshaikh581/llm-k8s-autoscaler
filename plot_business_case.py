@@ -254,9 +254,13 @@ def two_regime_verdict(s, rep):
             lines.append(_row(r))
     lines.append(_row(hpa) + "   <- HPA reference")
 
-    lines.append("\nHONEST NOTE: on (cost, SLA) alone HPA/KEDA sit ON the frontier (100% SLA).")
-    lines.append("The LLM advantage is COST-AT-MATCHED-SLA (regime A) and STABILITY (regime B),")
-    lines.append("not raw SLA dominance. Present all three axes together.")
+    lines.append("\nHONEST NOTE: the trained RL baselines win both regimes on this trace")
+    lines.append("(DQN cheapest at matched SLA, PPO most stable) and HPA/KEDA sit on the")
+    lines.append("(cost, SLA) frontier at 100% SLA. The LLMs do NOT dominate on cost or")
+    lines.append("stability. Their value is being COMPETITIVE ZERO-SHOT: no workload-specific")
+    lines.append("training, versus 500K training steps for DQN/PPO -- and DQN's edge is")
+    lines.append("seed-unstable (scale count 145-207 across seeds, std 25; the earlier")
+    lines.append("single-seed run's 65 was an outlier). See plots/rl_seed_variance.csv.")
     lines.append("=" * 78)
     print("\n".join(lines))
 

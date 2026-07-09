@@ -31,11 +31,11 @@ torch.set_num_threads(1)  # be a polite neighbor; MLP training is tiny
 
 
 def train(algo_name: str, trace: np.ndarray, total_timesteps: int,
-          models_dir: Path):
+          models_dir: Path, seed: int = 42):
     models_dir.mkdir(parents=True, exist_ok=True)
 
-    env = Monitor(AutoscaleEnvV3(trace, seed=42))
-    eval_env = Monitor(AutoscaleEnvV3(trace, seed=123))
+    env = Monitor(AutoscaleEnvV3(trace, seed=seed))
+    eval_env = Monitor(AutoscaleEnvV3(trace, seed=seed + 1))
 
     print(f"\n{'='*60}")
     print(f"Training {algo_name} on V3 env (hardened sim) — {total_timesteps} timesteps")
@@ -56,6 +56,7 @@ def train(algo_name: str, trace: np.ndarray, total_timesteps: int,
             exploration_final_eps=0.05,
             target_update_interval=1000,
             policy_kwargs={"net_arch": [256, 256]},
+            seed=seed,
             verbose=0,
         )
     elif algo_name == "PPO":
@@ -70,6 +71,7 @@ def train(algo_name: str, trace: np.ndarray, total_timesteps: int,
             clip_range=0.2,
             ent_coef=0.01,
             policy_kwargs={"net_arch": [256, 256]},
+            seed=seed,
             verbose=0,
         )
     else:
@@ -93,12 +95,12 @@ def train(algo_name: str, trace: np.ndarray, total_timesteps: int,
 
 
 def evaluate(model, algo_name: str, trace: np.ndarray, output_dir: Path,
-             suffix: str = ""):
+             suffix: str = "", seed: int = 999):
     output_dir.mkdir(parents=True, exist_ok=True)
     out_file = output_dir / f"results_{algo_name.lower()}_rl{suffix}.csv"
 
-    env = AutoscaleEnvV3(trace, seed=999)
-    obs, _ = env.reset(seed=999)
+    env = AutoscaleEnvV3(trace, seed=seed)
+    obs, _ = env.reset(seed=seed)
 
     def row(step, m, cluster, scale_event):
         return {
@@ -155,6 +157,8 @@ def main():
     parser.add_argument("--algo", choices=["DQN", "PPO", "both"], default="both",
                         help="train one algorithm (lets DQN and PPO run in parallel)")
     parser.add_argument("--timesteps", type=int, default=500_000)
+    parser.add_argument("--seed", type=int, default=42,
+                        help="training seed (env, eval env, and SB3 model)")
     parser.add_argument("--trace", type=str,
                         default=str(SCRIPT_DIR / "traces" / "trace_alibaba_v2.npy"))
     parser.add_argument("--output-dir", type=str,
@@ -176,10 +180,12 @@ def main():
     algos = ["DQN", "PPO"] if args.algo == "both" else [args.algo]
     all_results = {}
     for algo in algos:
-        model, train_time = train(algo, train_trace, args.timesteps, models_dir)
-        print(f"\nEvaluating {algo}:")
-        r_full = evaluate(model, algo, full_trace, output_dir)
-        r_held = evaluate(model, algo, test_indist, output_dir, "_indist")
+        model, train_time = train(algo, train_trace, args.timesteps, models_dir,
+                                  seed=args.seed)
+        print(f"\nEvaluating {algo} (seed {args.seed}):")
+        r_full = evaluate(model, algo, full_trace, output_dir, seed=args.seed + 2)
+        r_held = evaluate(model, algo, test_indist, output_dir, "_indist",
+                          seed=args.seed + 2)
         all_results[algo] = {
             "train_time": train_time,
             "full": summarize(r_full, "Full alibaba trace"),

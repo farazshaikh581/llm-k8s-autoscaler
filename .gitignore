@@ -41,3 +41,4 @@ logs/
 
 # Jupyter
 .ipynb_checkpoints/
+models_v3_seeds/

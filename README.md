@@ -19,7 +19,7 @@ We evaluate whether LLMs can make real-time scaling decisions for containerized 
 
 ## Key Findings
 
-- **LLMs match or exceed traditional autoscalers** — Llama 70B with domain prompting achieves 100% SLA compliance at lower cost than HPA
+- **LLMs are competitive zero-shot** — the core models match trained RL and HPA on SLA with no workload-specific training, landing within ~15–20% on cost (they do not beat the trained baselines on cost or stability)
 - **Model size does not predict quality** — 8B parameter models outperform 80B and 120B models
 - **Domain-enriched prompts are consistently best** — averaging 100% SLA across all core models
 - **History augmentation causes instability** — leading to thrashing and SLA degradation, especially on larger models
