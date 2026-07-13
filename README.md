@@ -221,6 +221,32 @@ Each long-sim run covers 6 models x 4 prompt variants plus HPA/KEDA baselines. L
 | Groq (console.groq.com) | Llama 4 Scout | Rate-limited |
 | Cerebras (cloud.cerebras.ai) | GPT-OSS 120B | Simulation only |
 
+### Step indexing and reactivity lag (real-cluster runs)
+
+`k8s_autoscaler.py` indexes the workload trace by loop iteration (`trace[step]`), not by
+wall-clock time. Each step's real duration is the model's inference latency plus a fixed
+`interval` (60 s) sleep. For fast models this stays close to nominal; for slower/more variable
+ones — `llama-70b` via NVIDIA in particular — per-call latency is highly variable (typically
+10-60 s, with recurring spikes to 300-430 s), so the step counter falls further behind real
+elapsed time as a run progresses. Observed magnitude in one Phase-1 real-cluster run: 96 real
+minutes into a 120-step run, the load generator's independent real-time clock was at trace
+position ~93, while the autoscaler's own step counter was only at step 35 — a ~55-step-stale
+view of the trace.
+
+This is intentional and is the real-cluster manifestation of the reactivity tradeoff already
+characterized in simulation (see the stability/oscillation discussion above): slower models
+cannot keep pace with real-time load, so their scaling decisions are made against an
+increasingly stale `rps_target`. It is not corrected/resynced to wall-clock, and it is not a
+data-quality bug in `latency_p90_ms` — that column is measured by a direct probe (10 real
+requests against the service) that runs *before* the LLM is called each step, so it reflects
+genuine pod-serving latency at that moment, independent of `llm_latency_ms`.
+
+For analysis: when using `rps_target` from a slow-model CSV as a ground-truth label (e.g. "did
+the controller react correctly to load X"), check whether cumulative `llm_latency_ms` has
+outrun `step * interval` for that run — a "reactivity lag" derived from that comparison is a
+natural real-cluster metric for Section V, distinct from the simulation's scale-event/oscillation
+characterization.
+
 ## Workload Traces
 
 The workload traces are derived from the [Alibaba Cluster Trace 2018](https://github.com/alibaba/clusterdata/tree/master/cluster-trace-v2018), specifically the `machine_usage` table (~1.3 million machines over 8 days). The original dataset is described in:
