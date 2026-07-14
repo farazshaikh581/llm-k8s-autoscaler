@@ -24,9 +24,13 @@ Thumbs.db
 
 # Secrets — NEVER commit these
 api_keys.conf
+api_keys.conf.bak*
 groq_keys.txt
 *.pem
 *.key
+
+# Claude Code local settings (per-user, not shared)
+.claude/settings.local.json
 
 # Large data files
 machine_usage.csv
@@ -42,3 +46,6 @@ logs/
 # Jupyter
 .ipynb_checkpoints/
 models_v3_seeds/
+
+# Timestamped ad-hoc backup dirs (redundant with git history)
+*_backup_[0-9]*/

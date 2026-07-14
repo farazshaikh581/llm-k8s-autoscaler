@@ -1,0 +1,10 @@
+step,timestamp,replicas,ready_replicas,cpu_millicores,memory_mib,rps_target,latency_p90_ms,success_rate,llm_decision,scale_event,llm_model,llm_variant,llm_tokens,llm_latency_ms,workload_type
+0,2026-06-21 05:35:52,7,3,8,89,292,85.5,1.0,7,1,llama4-scout,zero_shot,686,1227.5,CPU-intensive
+1,2026-06-21 06:28:32,20,7,428,80,259,47.3,1.0,20,1,llama4-scout,zero_shot,686,1228.0,CPU-intensive
+2,2026-06-21 07:07:33,8,7,792,81,200,94.5,1.0,8,1,llama4-scout,zero_shot,686,1234.9,CPU-intensive
+3,2026-06-21 07:48:04,7,7,7,80,205,89.8,1.0,7,1,llama4-scout,zero_shot,635,1121.5,CPU-intensive
+4,2026-06-21 08:28:36,7,7,7,80,222,40.4,1.0,7,0,llama4-scout,zero_shot,182,89.3,CPU-intensive
+5,2026-06-21 09:09:06,7,7,7,80,286,70.0,1.0,7,0,llama4-scout,zero_shot,682,1239.1,CPU-intensive
+6,2026-06-21 09:48:06,7,7,7,80,575,36.5,1.0,7,0,llama4-scout,zero_shot,182,117.4,CPU-intensive
+7,2026-06-21 10:27:05,7,7,7,80,776,44.2,1.0,7,0,llama4-scout,zero_shot,686,1233.8,CPU-intensive
+8,2026-06-21 11:07:37,20,7,7,80,746,85.3,1.0,20,1,llama4-scout,zero_shot,686,1256.6,CPU-intensive

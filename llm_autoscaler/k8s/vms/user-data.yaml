@@ -1,0 +1,11 @@
+#cloud-config
+users:
+  - name: k8s
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+    ssh_authorized_keys:
+      - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDQL8ODu2q4DH8DWlUeazA/Be2rA04mdT9WxEg7+9wWmj4lK0JRn4zntsks0MJ3sLAwTl3PDSmk5BFAK5XH36BLMLBUOWscWpSyMQdVb+wX+YLEwTpApAIBkp3r3Q6DcvkuMx4o3TzOD7WOhis7DEUx4hdLroVHiUD0Y/MgrsSYxqQP9QBvIKa6mfArXBJAyLq9DaeoRMZKnkPQIuegIlmW/eWfDmP2odKhRZd5uAw1IpXd6t1xEIRvg8MmGfYrHIilVSeKjUyn0KxhzJXwK343JcceOPJi7X9emhQSZoSUECZUmQJHtOb2yGsZWbGzlIeR0Nv1XuZrWH513rpHkc51 ffarazug@node0.vsrm.volstr-pg0.wall1.ilabt.imec.be
+packages:
+  - curl
+runcmd:
+  - echo "Worker VM ready"

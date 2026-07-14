@@ -1,0 +1,11 @@
+step,timestamp,replicas,ready_replicas,cpu_millicores,memory_mib,rps_target,latency_p90_ms,success_rate,llm_decision,scale_event,llm_model,llm_variant,llm_tokens,llm_latency_ms,workload_type
+0,2026-06-21 05:32:19,3,3,8,130,1437,35.7,1.0,3,0,llama4-scout,zero_shot,184,175.3,I/O-bound
+1,2026-06-21 06:08:16,20,3,119,59,1535,34.1,1.0,20,1,llama4-scout,zero_shot,688,1220.9,I/O-bound
+2,2026-06-21 06:47:16,16,16,53,213,1031,36.2,1.0,16,1,llama4-scout,zero_shot,184,97.0,I/O-bound
+3,2026-06-21 07:27:46,16,16,84,229,1088,33.6,1.0,16,0,llama4-scout,zero_shot,184,97.2,I/O-bound
+4,2026-06-21 08:06:45,12,16,16,235,1214,35.8,1.0,12,1,llama4-scout,zero_shot,688,1241.4,I/O-bound
+5,2026-06-21 08:47:17,12,12,12,184,295,36.6,1.0,12,0,llama4-scout,zero_shot,183,102.9,I/O-bound
+6,2026-06-21 09:26:16,12,12,12,184,1494,35.8,1.0,12,0,llama4-scout,zero_shot,184,91.3,I/O-bound
+7,2026-06-21 10:06:46,12,12,12,184,1194,35.2,1.0,12,0,llama4-scout,zero_shot,184,104.1,I/O-bound
+8,2026-06-21 10:44:13,12,12,12,184,1552,35.6,1.0,12,0,llama4-scout,zero_shot,688,1247.2,I/O-bound
+9,2026-06-21 11:24:45,8,12,12,184,1818,36.7,1.0,8,1,llama4-scout,zero_shot,688,1238.8,I/O-bound

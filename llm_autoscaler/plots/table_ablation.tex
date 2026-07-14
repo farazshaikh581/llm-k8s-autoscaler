@@ -1,0 +1,15 @@
+\begin{table}[t]
+\centering\small
+\caption{Prompt Variant Ablation (averaged across core models, long simulation).}
+\label{tab:ablation}
+\begin{tabular}{lrrrr}
+\toprule
+Variant & Avg SLA\% & Avg Latency & Avg Cost & Avg Scales \\
+\midrule
+Zero-Shot & \textbf{99.8} & 60.7 & 3703 & 91 \\
+Domain & \textbf{99.9} & 60.5 & 4079 & 76 \\
+History-5 & \textbf{100.0} & 53.6 & 4510 & 386 \\
+Chain-of-Thought & \textbf{99.7} & 63.1 & 3359 & 52 \\
+\bottomrule
+\end{tabular}
+\end{table}
