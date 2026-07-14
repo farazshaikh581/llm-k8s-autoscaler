@@ -17,6 +17,10 @@ import argparse
 import glob
 import os
 
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 
 VCPU_REQUEST = 0.25       # cpu: 250m request per replica (k8s/deployment.yaml, k8s/workloads.yaml)
@@ -25,11 +29,28 @@ HOURS_PER_YEAR = 8760.0
 SLA_MS = 200.0             # P90 latency SLA threshold (ms) — same as sim
 SLA_DEPLOYABLE = 99.0
 MIN_STEPS = 120            # only complete runs
+OUT_DIR = "business_case_real"
 
 BASELINE_MODELS = {"hpa": "HPA", "keda": "KEDA", "rl-dqn": "DQN", "rl-ppo": "PPO"}
 CORE_LLM_MODELS = ["llama-8b", "llama-70b", "mistral-small4", "qwen3-80b", "llama4-scout"]
 DISPLAY = {"llama-8b": "Llama-8B", "llama-70b": "Llama-70B", "mistral-small4": "Mistral",
            "qwen3-80b": "Qwen-80B", "llama4-scout": "Scout"}
+
+# Okabe-Ito, colorblind-safe — same palette as plot_business_case.py (sim) for
+# visual consistency; the REAL CLUSTER tag on every figure is what disambiguates.
+COLORS = {"LLM": "#0072B2", "HPA": "#E69F00", "KEDA": "#D55E00", "DQN": "#009E73", "PPO": "#009E73"}
+INK = "#222222"
+MUTED = "#888888"
+GRID = "#DDDDDD"
+SOURCE_TAG = "REAL K8S CLUSTER — measured, not simulated"
+TAG_COLOR = "#CC3311"  # red-orange: visually distinct from the sim tag's blue
+
+plt.rcParams.update({
+    "font.size": 11, "axes.edgecolor": MUTED, "axes.linewidth": 0.8,
+    "axes.grid": True, "grid.color": GRID, "grid.linewidth": 0.7,
+    "xtick.color": INK, "ytick.color": INK, "text.color": INK,
+    "axes.labelcolor": INK, "axes.titlecolor": INK, "figure.dpi": 130,
+})
 
 
 def parse_name(path):
@@ -95,6 +116,142 @@ def flat_label(row):
     return row.label if row.cls != "LLM" else f"{DISPLAY.get(row.model, row.model)}/{row.variant}"
 
 
+def bar_label(row):
+    return row.label if row.cls != "LLM" else f"{DISPLAY.get(row.model, row.model)}\n({row.variant})"
+
+
+def pick_representative(s):
+    """One config per core LLM model: cheapest with SLA >= threshold (else cheapest overall)."""
+    reps = []
+    for m in CORE_LLM_MODELS:
+        sub = s[s.model == m]
+        if sub.empty:
+            continue
+        ok = sub[sub.lat_sla >= SLA_DEPLOYABLE]
+        pick = (ok if not ok.empty else sub).sort_values("cost_usd").iloc[0]
+        reps.append(pick)
+    bases = s[s.model.isin(BASELINE_MODELS)]
+    if bases.empty and not reps:
+        return s
+    return pd.concat([pd.DataFrame(reps), bases]).reset_index(drop=True)
+
+
+def _tag(fig):
+    fig.text(0.01, 0.995, SOURCE_TAG, fontsize=9.5, fontweight="bold",
+              color=TAG_COLOR, va="top", ha="left")
+
+
+def _save(fig, name):
+    os.makedirs(OUT_DIR, exist_ok=True)
+    for ext in ("png", "pdf"):
+        fig.savefig(os.path.join(OUT_DIR, f"{name}.{ext}"), bbox_inches="tight")
+    plt.close(fig)
+    print(f"  wrote {OUT_DIR}/{name}.png")
+
+
+def fig_latency_cost(rep, source_label, suffix=""):
+    rep = rep.sort_values("cost_usd").reset_index(drop=True)
+    labels = [bar_label(r) for _, r in rep.iterrows()]
+    colors = [COLORS.get(c, COLORS["LLM"]) for c in rep.cls]
+    x = np.arange(len(rep))
+
+    fig, (axL, axR) = plt.subplots(1, 2, figsize=(13, 5.2))
+
+    axL.bar(x, rep.lat_sla, color=colors, width=0.68, zorder=3)
+    axL.set_ylim(0, 105)
+    axL.set_ylabel("Latency SLA attainment (%)")
+    axL.set_title(f"Robustness  —  % of time P90 < {SLA_MS:.0f} ms", fontsize=12, loc="left", pad=10)
+    axL.axhline(99, color=MUTED, ls="--", lw=1, zorder=1)
+    axL.text(-0.4, 99.5, "99% SLA", color=MUTED, fontsize=8, va="bottom", ha="left")
+    for xi, v in zip(x, rep.lat_sla):
+        axL.text(xi, v + 1.0, f"{v:.1f}", ha="center", va="bottom", fontsize=8.5)
+
+    axR.bar(x, rep.cost_usd, color=colors, width=0.68, zorder=3)
+    axR.set_ylabel("Annualized infra cost (USD / service)")
+    axR.set_title(f"Cost  —  @ ${VCPU_HOUR_USD:.2f}/vCPU-hr, one service", fontsize=12, loc="left", pad=10)
+    hpa_cost = rep[rep.model == "hpa"].cost_usd.values
+    if hpa_cost.size:
+        axR.axhline(hpa_cost[0], color=COLORS["HPA"], ls="--", lw=1, zorder=1)
+        axR.text(len(rep) - 0.4, hpa_cost[0], "  HPA cost", color=COLORS["HPA"],
+                 fontsize=8, va="bottom", ha="right")
+    top = rep.cost_usd.max()
+    for xi, v in zip(x, rep.cost_usd):
+        axR.text(xi, v + top * 0.01, f"${v:,.0f}", ha="center", va="bottom", fontsize=8.5)
+    axR.set_ylim(0, top * 1.14)
+
+    for ax in (axL, axR):
+        ax.set_xticks(x)
+        ax.set_xticklabels(labels, fontsize=8.5)
+        ax.set_axisbelow(True)
+        ax.spines[["top", "right"]].set_visible(False)
+
+    present = set(rep.cls)
+    legend_order = [c for c in ["LLM", "HPA", "KEDA", "PPO", "DQN"] if c in present]
+    legend_text = {"LLM": "LLM (frozen)", "HPA": "HPA", "KEDA": "KEDA", "PPO": "RL (PPO)", "DQN": "RL (DQN)"}
+    handles = [plt.Rectangle((0, 0), 1, 1, color=COLORS[c]) for c in legend_order]
+    fig.legend(handles, [legend_text[c] for c in legend_order],
+               loc="lower center", ncol=len(legend_order), frameon=False, fontsize=9.5, bbox_to_anchor=(0.5, -0.02))
+    fig.suptitle(f"Real cluster ({source_label}): LLM vs. rule-based autoscalers", fontsize=14, y=1.03)
+    fig.tight_layout(rect=[0, 0.04, 1, 0.95])
+    _tag(fig)
+    _save(fig, f"fig_business_latency_cost_real{suffix}")
+
+
+def fig_cost_stability(s, rep, source_label, suffix=""):
+    core = s[(s.model.isin(CORE_LLM_MODELS) | s.model.isin(BASELINE_MODELS))]
+    label_runs = set(rep.index)
+    fig, ax = plt.subplots(figsize=(9.5, 6.5))
+    for _, r in core.iterrows():
+        marker = "*" if r.cls == "LLM" else ("s" if r.cls in ("HPA", "KEDA") else "D")
+        sz = 340 if marker == "*" else 150
+        ax.scatter(r.cost_usd, r.scales, s=sz, c=COLORS.get(r.cls, COLORS["LLM"]), marker=marker,
+                   edgecolors="white", linewidths=0.9, zorder=3, alpha=0.92)
+        ax.annotate(flat_label(r), (r.cost_usd, r.scales), fontsize=7.5, color=INK,
+                    xytext=(6, 4), textcoords="offset points")
+
+    hpa_rows = rep[rep.model == "hpa"]
+    if not hpa_rows.empty:
+        hpa = hpa_rows.iloc[0]
+        ax.axvline(hpa.cost_usd, color=COLORS["HPA"], ls="--", lw=1, zorder=1)
+        ax.text(hpa.cost_usd, ax.get_ylim()[1] * 0.02, " HPA cost", color=COLORS["HPA"],
+                fontsize=8, ha="left", va="bottom")
+
+    ax.set_xlabel("Annualized infra cost (USD / service)  → cheaper is left")
+    ax.set_ylabel("Scaling actions over the run  → more stable is down")
+    ax.set_title(f"Real cluster ({source_label}): cost vs. stability  —  good corner is bottom-left",
+                 fontsize=12.5, loc="left")
+    ax.set_ylim(-5, max(core.scales.max() * 1.35, 10))
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.set_axisbelow(True)
+    handles = [plt.Line2D([], [], marker=m, color="w", markerfacecolor=c,
+                          markersize=12, label=l, markeredgecolor="gray")
+               for m, c, l in [("*", COLORS["LLM"], "LLM (frozen)"), ("s", COLORS["HPA"], "HPA/KEDA"),
+                                ("D", COLORS["PPO"], "RL")]]
+    ax.legend(handles=handles, loc="upper right", frameon=False, fontsize=9.5)
+    fig.tight_layout()
+    _tag(fig)
+    _save(fig, f"fig_business_cost_stability_real{suffix}")
+
+
+def fig_stability(rep, source_label, suffix=""):
+    rep = rep.sort_values("scales").reset_index(drop=True)
+    labels = [bar_label(r) for _, r in rep.iterrows()]
+    colors = [COLORS.get(c, COLORS["LLM"]) for c in rep.cls]
+    x = np.arange(len(rep))
+    fig, ax = plt.subplots(figsize=(11, 4.8))
+    ax.bar(x, rep.scales, color=colors, width=0.68, zorder=3)
+    for xi, v in zip(x, rep.scales):
+        ax.text(xi, v + max(rep.scales.max(), 1) * 0.01, f"{v}", ha="center", va="bottom", fontsize=8.5)
+    ax.set_ylabel("Scaling actions over the run")
+    ax.set_title(f"Real cluster ({source_label}): operational stability  —  fewer scaling actions = less churn",
+                 fontsize=13, loc="left")
+    ax.set_xticks(x); ax.set_xticklabels(labels, fontsize=8.5)
+    ax.spines[["top", "right"]].set_visible(False); ax.set_axisbelow(True)
+    fig.tight_layout()
+    _tag(fig)
+    _save(fig, f"fig_business_stability_real{suffix}")
+
+
 def two_regime_verdict(s):
     lines = ["\n" + "=" * 78, "REAL-CLUSTER BUSINESS CASE", "=" * 78]
     if "hpa" not in set(s.model):
@@ -134,6 +291,7 @@ def main():
     ap.add_argument("--results-dir", default="results_k8s_v2")
     ap.add_argument("--workload", default="cpu", help="cpu, io, or '' for all")
     ap.add_argument("--out", default=None, help="CSV output path (default: <results-dir>_business_case.csv)")
+    ap.add_argument("--no-plots", action="store_true", help="skip figure generation, table + verdict only")
     args = ap.parse_args()
 
     s = load_summary(args.results_dir, args.workload or None)
@@ -143,9 +301,18 @@ def main():
         print("No complete runs found.")
         return
     out = args.out or f"{args.results_dir.rstrip('/')}_business_case.csv"
-    s.sort_values("cost_usd").to_csv(out, index=False)
+    s = s.sort_values("cost_usd")
+    s.to_csv(out, index=False)
     print(f"Summary table -> {out}")
-    two_regime_verdict(s.sort_values("cost_usd"))
+    two_regime_verdict(s)
+
+    if not args.no_plots:
+        source_label = f"{args.results_dir}, {args.workload or 'all'} workload"
+        suffix = f"_{args.workload}" if args.workload else ""
+        rep = pick_representative(s)
+        fig_latency_cost(rep, source_label, suffix)
+        fig_cost_stability(s, rep, source_label, suffix)
+        fig_stability(rep, source_label, suffix)
 
 
 if __name__ == "__main__":

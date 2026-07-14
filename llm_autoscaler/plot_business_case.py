@@ -37,6 +37,8 @@ COLORS = {"LLM": "#0072B2", "HPA": "#E69F00", "KEDA": "#D55E00", "RL": "#009E73"
 INK = "#222222"
 MUTED = "#888888"
 GRID = "#DDDDDD"
+SOURCE_TAG = "SIMULATED — hardened simulator, 24h Alibaba trace (not real cluster)"
+TAG_COLOR = "#0072B2"  # blue: visually distinct from the real-cluster tag's red-orange
 
 CORE_MODELS = ["llama-8b", "llama-70b", "mistral-small4", "qwen3-80b"]
 BASELINES = {"hpa_baseline": "HPA", "keda_baseline": "KEDA",
@@ -155,6 +157,7 @@ def fig_latency_cost(rep):
                loc="lower center", ncol=4, frameon=False, fontsize=9.5, bbox_to_anchor=(0.5, -0.02))
     fig.suptitle("LLM autoscalers match SLA robustness at comparable cost", fontsize=14, y=1.0)
     fig.tight_layout(rect=[0, 0.04, 1, 0.97])
+    _tag(fig)
     _save(fig, "fig_business_latency_cost")
 
 
@@ -201,6 +204,7 @@ def fig_cost_stability(s, rep):
                for m, c, l in [("*", "LLM", "LLM (frozen)"), ("s", "HPA", "HPA/KEDA"), ("D", "RL", "RL")]]
     ax.legend(handles=handles, loc="center right", frameon=False, fontsize=9.5)
     fig.tight_layout()
+    _tag(fig)
     _save(fig, "fig_business_cost_stability")
 
 
@@ -219,6 +223,7 @@ def fig_stability(rep):
     ax.set_xticks(x); ax.set_xticklabels(labels, fontsize=8.5)
     ax.spines[["top", "right"]].set_visible(False); ax.set_axisbelow(True)
     fig.tight_layout()
+    _tag(fig)
     _save(fig, "fig_business_stability")
 
 
@@ -259,6 +264,12 @@ def two_regime_verdict(s, rep):
     lines.append("not raw SLA dominance. Present all three axes together.")
     lines.append("=" * 78)
     print("\n".join(lines))
+
+
+def _tag(fig):
+    fig.text(0.5, 1.09, SOURCE_TAG, fontsize=10, fontweight="bold",
+              color=TAG_COLOR, va="bottom", ha="center",
+              bbox=dict(boxstyle="round,pad=0.35", facecolor="#EAF2FA", edgecolor=TAG_COLOR, linewidth=1.1))
 
 
 def _save(fig, name):
