@@ -70,7 +70,22 @@ PROVIDER_MODEL_IDS = {
     },
     "qwen3-80b": {
         "nvidia": "qwen/qwen3-next-80b-a3b-instruct",
+        "siliconflow": "Qwen/Qwen3-Next-80B-A3B-Instruct",
+        "openrouter": "qwen/qwen3-next-80b-a3b-instruct:free",
+        "novita": "qwen/qwen3-next-80b-a3b-instruct",
+        "dashscope": "qwen3-next-80b-a3b-instruct",
     },
+}
+
+# Extra providers to fall back on when every key of the primary provider is
+# rate-limited. Must host the exact same model, never a different size.
+# Only providers with a key in the environment join the pool, in this order.
+# openrouter uses the :free endpoint (50 req/day), so it sits after
+# siliconflow, whose $1 starter credit covers ~50 full runs.
+FALLBACK_PROVIDERS = {
+    "qwen3-80b": ["siliconflow", "openrouter", "novita", "dashscope"],
+    # same open weights on all three; groq last (tight daily caps)
+    "gpt-oss-120b": ["cerebras", "groq"],
 }
 
 PROVIDER_URLS = {
@@ -79,6 +94,10 @@ PROVIDER_URLS = {
     "cerebras": "https://api.cerebras.ai/v1",
     "nvidia": "https://integrate.api.nvidia.com/v1",
     "google": "https://generativelanguage.googleapis.com/v1beta/openai/",
+    "novita": "https://api.novita.ai/openai",
+    "dashscope": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+    "siliconflow": "https://api.siliconflow.com/v1",
+    "openrouter": "https://openrouter.ai/api/v1",
 }
 
 PROVIDER_ENV_VARS = {
@@ -87,6 +106,10 @@ PROVIDER_ENV_VARS = {
     "cerebras": "CEREBRAS_API_KEY",
     "nvidia": "NVIDIA_API_KEY",
     "google": "GOOGLE_API_KEY",
+    "novita": "NOVITA_API_KEY",
+    "dashscope": "DASHSCOPE_API_KEY",
+    "siliconflow": "SILICONFLOW_API_KEY",
+    "openrouter": "OPENROUTER_API_KEY",
 }
 
 PROMPT_VARIANTS = ["zero_shot", "history_5", "cot", "domain", "baseline"]
@@ -117,19 +140,37 @@ def make_client(provider: str) -> OpenAI:
     return OpenAI(base_url=PROVIDER_URLS[provider], api_key=api_key)
 
 
-def make_clients(provider: str) -> list:
-    """One OpenAI client per available key for this provider, for daily-quota
-    failover. Reads ENV, ENV_2, ENV_3 (e.g. NVIDIA_API_KEY, NVIDIA_API_KEY_2)."""
+def provider_keys(provider: str) -> list[str]:
+    """All keys for a provider. Reads ENV, ENV_2, ENV_3
+    (e.g. NVIDIA_API_KEY, NVIDIA_API_KEY_2)."""
     env_var = PROVIDER_ENV_VARS[provider]
     keys = []
     for suffix in ("", "_2", "_3"):
         k = os.environ.get(env_var + suffix)
         if k and k not in keys:
             keys.append(k)
-    if not keys:
-        print(f"ERROR: Set {env_var} for provider {provider}")
-        sys.exit(1)
-    return [OpenAI(base_url=PROVIDER_URLS[provider], api_key=k) for k in keys]
+    return keys
+
+
+def make_client_pool(model_key: str, provider: str) -> list[tuple]:
+    """(client, model_id, provider) entries: every key of the primary
+    provider first, then keys of any fallback provider that hosts the
+    exact same model. call_llm rotates through them on rate limits."""
+    pool = []
+    providers = [provider]
+    for fb in FALLBACK_PROVIDERS.get(model_key, []):
+        if fb != provider and fb in PROVIDER_MODEL_IDS.get(model_key, {}):
+            providers.append(fb)
+    for prov in providers:
+        keys = provider_keys(prov)
+        if not keys and prov == provider:
+            print(f"ERROR: Set {PROVIDER_ENV_VARS[prov]} for provider {prov}")
+            sys.exit(1)
+        model_id = PROVIDER_MODEL_IDS[model_key][prov]
+        for k in keys:
+            pool.append((OpenAI(base_url=PROVIDER_URLS[prov], api_key=k),
+                         model_id, prov))
+    return pool
 
 
 def resolve_model_id(model_key: str, provider: str) -> str:
@@ -306,17 +347,19 @@ def build_prompt(variant: str, state: dict, history: list, workload_type: str) -
 # LLM call with robust retry
 # ---------------------------------------------------------------------------
 
-def call_llm(clients, model_id: str, prompt: str) -> tuple[int, int, float]:
-    # `clients` is a list; on a rate/daily limit we rotate to the next key
-    # immediately and only back off once every key in the pool is limited.
-    if not isinstance(clients, (list, tuple)):
-        clients = [clients]
-    n = len(clients)
+def call_llm(pool, prompt: str) -> tuple[int, int, float]:
+    # `pool` is a list of (client, model_id, provider) entries. On a rate or
+    # daily limit we rotate to the next entry immediately and only back off
+    # once every entry in the pool is limited. Fallback-provider entries sit
+    # at the end of the pool, so they are used only when the primary is out.
+    n = len(pool)
     idx = getattr(call_llm, "_idx", 0) % n
     attempt = 0
-    rotated = 0  # keys tried without success in this call
+    rotated = 0  # entries tried without success in this call
+    saw_retryable = False  # sweep hit at least one recoverable error
+    saw_rate = False       # sweep hit a real rate limit (longer backoff)
     while True:
-        client = clients[idx]
+        client, model_id, provider = pool[idx]
         try:
             t0 = time.time()
             response = client.chat.completions.create(
@@ -340,31 +383,56 @@ def call_llm(clients, model_id: str, prompt: str) -> tuple[int, int, float]:
                 nums = re.findall(r'\b(\d+)\b', content)
                 replicas = int(nums[-1]) if nums else -1
 
-            call_llm._idx = idx  # remember the working key for next step
+            call_llm._idx = idx  # remember the working entry for next step
             return max(REPLICA_MIN, min(REPLICA_MAX, replicas)), tokens, latency_ms
 
         except Exception as e:
             err_str = str(e)
-            if "429" in err_str or "rate" in err_str.lower():
-                # rotate to the next key immediately (no wait) until all tried
+            err_low = err_str.lower()
+            limited = "429" in err_str or "rate" in err_low
+            # gateway timeouts and dropped connections happen on busy
+            # providers (nvidia 504s killed whole qwen runs); wait them out
+            transient = (any(c in err_str for c in ("500", "502", "503", "504"))
+                         or "timed out" in err_low or "timeout" in err_low
+                         or "connection" in err_low)
+            # a fallback entry can run out of paid credit; skip it instead
+            # of crashing the run, but never busy-wait on an empty account
+            no_balance = "402" in err_str or "balance" in err_low
+            if limited or transient or no_balance:
+                saw_retryable = saw_retryable or limited or transient
+                saw_rate = saw_rate or limited
+                # rotate to the next entry immediately (no wait) until all tried
                 if n > 1 and rotated < n - 1:
                     rotated += 1
                     idx = (idx + 1) % n
-                    print(f"    key limited, rotating to key #{idx + 1}/{n}")
+                    next_prov = pool[idx][2]
+                    why = ("out of balance" if no_balance
+                           else "limited" if limited else "erroring")
+                    print(f"    {provider} key {why}, rotating to "
+                          f"entry #{idx + 1}/{n} ({next_prov})")
                     continue
-                rotated = 0
+                if not saw_retryable:
+                    # every entry is out of balance; waiting cannot fix that
+                    raise
                 attempt += 1
-                wait = min(60 * attempt, 900)
-                retry_match = re.search(r'try again in (\d+)m([\d.]+)', err_str)
-                if retry_match:
-                    wait = int(retry_match.group(1)) * 60 + int(float(retry_match.group(2))) + 5
+                if saw_rate:
+                    wait = min(60 * attempt, 900)
+                    retry_match = re.search(r'try again in (\d+)m([\d.]+)', err_str)
+                    if retry_match:
+                        wait = int(retry_match.group(1)) * 60 + int(float(retry_match.group(2))) + 5
+                    else:
+                        sec_match = re.search(r'try again in ([\d.]+)s', err_str)
+                        if sec_match:
+                            wait = int(float(sec_match.group(1))) + 5
+                    if "tokens per day" in err_str or "daily" in err_str.lower():
+                        wait = max(wait, 600)
                 else:
-                    sec_match = re.search(r'try again in ([\d.]+)s', err_str)
-                    if sec_match:
-                        wait = int(float(sec_match.group(1))) + 5
-                if "tokens per day" in err_str or "daily" in err_str.lower():
-                    wait = max(wait, 600)
-                print(f"    all {n} key(s) limited, waiting {wait}s (attempt {attempt})...")
+                    # only transient server errors; retry much sooner
+                    wait = min(10 * attempt, 120)
+                rotated = 0
+                saw_retryable = False
+                saw_rate = False
+                print(f"    all {n} pool entries failing, waiting {wait}s (attempt {attempt})...")
                 time.sleep(wait)
                 continue
             raise
@@ -456,8 +524,7 @@ def run(args):
     is_rl = args.model in ("rl-dqn", "rl-ppo")
     is_llm = not is_baseline and not is_rl
 
-    clients = None
-    model_id = None
+    pool = None
     rl_model = None
 
     if is_llm:
@@ -469,8 +536,10 @@ def run(args):
                 sys.exit(1)
             provider = avail[0]
         model_id = resolve_model_id(args.model, provider)
-        clients = make_clients(provider)
-        print(f"Provider: {provider}, Model ID: {model_id}, keys: {len(clients)}")
+        pool = make_client_pool(args.model, provider)
+        pool_desc = ", ".join(f"{p}:{sum(1 for e in pool if e[2] == p)}"
+                              for p in dict.fromkeys(e[2] for e in pool))
+        print(f"Provider: {provider}, Model ID: {model_id}, pool: {pool_desc}")
     elif is_rl:
         algo = args.model.split("-")[1]
         rl_model = load_rl_model(algo)
@@ -562,7 +631,7 @@ def run(args):
             else:
                 prompt = build_prompt(args.variant, state, history, workload_type)
                 try:
-                    new_replicas, tokens, llm_lat = call_llm(clients, model_id, prompt)
+                    new_replicas, tokens, llm_lat = call_llm(pool, prompt)
                     errors = 0
                 except Exception as e:
                     errors += 1
