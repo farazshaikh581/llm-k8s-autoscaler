@@ -1,0 +1,6 @@
+model,n_decisions,median_s,mean_s,p90_s,max_s,pct_steps_gt_2x_median,pct_control_interval_at_median,logged_errors,logged_rotations,logged_steps,step_error_rate_pct,local_hosting_expected_effect
+mistral-small4,1440,0.51,1.8,1.03,304.24,10.1,0.9,0,0,288,0.0,"Minimal -- already near floor (median 0.5s), nothing to gain."
+llama-8b,1440,0.58,2.22,3.95,308.02,36.9,1.0,0,0,288,0.0,"Minimal -- already near floor (median 0.6s), nothing to gain."
+gpt-oss-120b,1440,0.58,14.32,4.99,830.65,22.0,1.0,0,31,264,0.0,Moderate -- removes rate-limit fallback rotations (~12% of steps); typical-case (median) latency already fast and would barely change.
+llama-70b,1440,25.99,52.24,102.76,625.95,22.4,43.3,3,0,265,1.1,"Partial -- removes shared-tenant queueing/network RTT, but genuine 70B compute remains; expect faster, not free (median already 43% of the 60s interval even without errors)."
+qwen3-80b,840,80.43,143.29,433.52,898.54,29.9,134.0,139,0,173,80.3,"Large -- endpoint is effectively dead (80%+ of steps hit HTTP 504); median decision time alone (80s) already exceeds the 60s control interval, so almost all overhead here is provider-side, not compute."
