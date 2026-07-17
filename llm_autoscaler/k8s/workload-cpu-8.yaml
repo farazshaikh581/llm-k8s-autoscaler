@@ -1,0 +1,63 @@
+# Isolated instance of the CPU-bound workload app for the new-model-family
+# screening lane (Llama4-Scout, Qwen3.6, Nemotron-3-Super, DeepSeek-V4-Pro,
+# GLM-4.7 vs RL/HPA/KEDA baselines). Pinned to k8s-worker3, which is idle
+# (~1% CPU requested) and not used by the live results_richer sweep lanes
+# (workload-cpu, workload-cpu-2). Mirrors workload-cpu-7's pattern.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: workload-cpu-8
+  labels:
+    app: workload-cpu-8
+    workload-type: cpu
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: workload-cpu-8
+  template:
+    metadata:
+      labels:
+        app: workload-cpu-8
+        workload-type: cpu
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: k8s-worker3
+      containers:
+      - name: web
+        image: python:3.10-slim
+        command: ["python", "/app/cpu_app.py"]
+        ports:
+        - containerPort: 8080
+        resources:
+          requests:
+            cpu: 250m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
+        readinessProbe:
+          httpGet: { path: /health, port: 8080 }
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        env:
+        - name: WORK_ITERATIONS
+          value: "500"
+        volumeMounts:
+        - name: code
+          mountPath: /app
+      volumes:
+      - name: code
+        configMap:
+          name: workload-code
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: workload-cpu-8
+spec:
+  selector:
+    app: workload-cpu-8
+  ports:
+  - port: 80
+    targetPort: 8080

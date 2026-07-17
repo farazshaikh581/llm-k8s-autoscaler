@@ -1,0 +1,64 @@
+# Isolated instance of the CPU-bound workload app for the RL-DQN re-run lane
+# (bug fix: k8s_autoscaler.py rl_decision() used a stale max_replicas=20
+# normalization instead of the real --max-replicas cap, causing phantom
+# scale-event churn on wiki_diurnal/cpu_bursty RL-DQN runs). Pinned to
+# k8s-worker4, which is idle (~10% CPU requested) and not used by any of the
+# three live sweep lanes (workload-cpu, workload-cpu-2, workload-cpu-4).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: workload-cpu-7
+  labels:
+    app: workload-cpu-7
+    workload-type: cpu
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: workload-cpu-7
+  template:
+    metadata:
+      labels:
+        app: workload-cpu-7
+        workload-type: cpu
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: k8s-worker4
+      containers:
+      - name: web
+        image: python:3.10-slim
+        command: ["python", "/app/cpu_app.py"]
+        ports:
+        - containerPort: 8080
+        resources:
+          requests:
+            cpu: 250m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
+        readinessProbe:
+          httpGet: { path: /health, port: 8080 }
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        env:
+        - name: WORK_ITERATIONS
+          value: "500"
+        volumeMounts:
+        - name: code
+          mountPath: /app
+      volumes:
+      - name: code
+        configMap:
+          name: workload-code
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: workload-cpu-7
+spec:
+  selector:
+    app: workload-cpu-7
+  ports:
+  - port: 80
+    targetPort: 8080

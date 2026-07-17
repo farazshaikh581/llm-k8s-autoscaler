@@ -20,6 +20,7 @@ import re
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from pathlib import Path
 
 import numpy as np
@@ -42,6 +43,10 @@ MODELS = {
     "gpt-oss-120b":     {"label": "GPT-OSS 120B"},
     "deepseek-v4-flash":{"label": "DeepSeek V4 Flash"},
     "qwen3-80b":        {"label": "Qwen 3 80B"},
+    "qwen3.6-27b":      {"label": "Qwen 3.6 27B"},
+    "nemotron3-super":  {"label": "Nemotron 3 Super 120B-A12B"},
+    "deepseek-v4-pro":  {"label": "DeepSeek V4 Pro"},
+    "glm-4.7":          {"label": "GLM 4.7"},
 }
 
 PROVIDER_MODEL_IDS = {
@@ -74,6 +79,20 @@ PROVIDER_MODEL_IDS = {
         "openrouter": "qwen/qwen3-next-80b-a3b-instruct:free",
         "novita": "qwen/qwen3-next-80b-a3b-instruct",
         "dashscope": "qwen3-next-80b-a3b-instruct",
+    },
+    # New-model-family screening (Jul 2026) -- all IDs confirmed live against
+    # each provider's /v1/models endpoint, not guessed from docs/marketing.
+    "qwen3.6-27b": {
+        "groq": "qwen/qwen3.6-27b",
+    },
+    "nemotron3-super": {
+        "nvidia": "nvidia/nemotron-3-super-120b-a12b",
+    },
+    "deepseek-v4-pro": {
+        "nvidia": "deepseek-ai/deepseek-v4-pro",
+    },
+    "glm-4.7": {
+        "cerebras": "zai-glm-4.7",
     },
 }
 
@@ -124,12 +143,23 @@ CSV_COLUMNS = [
     "latency_p90_ms", "success_rate",
     "llm_decision", "scale_event",
     "llm_model", "llm_variant", "llm_tokens", "llm_latency_ms",
-    "workload_type",
+    "workload_type", "decision_timeout",
 ]
 
 # ---------------------------------------------------------------------------
 # Provider client
 # ---------------------------------------------------------------------------
+
+# Some providers (NVIDIA NIM in particular, on gpt-oss-120b/qwen3-80b/
+# llama-70b) occasionally queue a request for minutes before responding
+# successfully -- not an error, just silent and unbounded. Without a client
+# timeout that stalls the whole step instead of rotating to a fallback
+# provider that's already configured and idle. 30s comfortably covers real
+# (sub-2s typical) latency while cutting off the multi-minute tail; disable
+# the SDK's own internal retries so a timeout raises once, fast, and our
+# outer pool-rotation loop in call_llm() handles what happens next.
+LLM_REQUEST_TIMEOUT_S = 30.0
+
 
 def make_client(provider: str) -> OpenAI:
     env_var = PROVIDER_ENV_VARS[provider]
@@ -137,7 +167,8 @@ def make_client(provider: str) -> OpenAI:
     if not api_key:
         print(f"ERROR: Set {env_var} for provider {provider}")
         sys.exit(1)
-    return OpenAI(base_url=PROVIDER_URLS[provider], api_key=api_key)
+    return OpenAI(base_url=PROVIDER_URLS[provider], api_key=api_key,
+                  timeout=LLM_REQUEST_TIMEOUT_S, max_retries=0)
 
 
 def provider_keys(provider: str) -> list[str]:
@@ -168,7 +199,8 @@ def make_client_pool(model_key: str, provider: str) -> list[tuple]:
             sys.exit(1)
         model_id = PROVIDER_MODEL_IDS[model_key][prov]
         for k in keys:
-            pool.append((OpenAI(base_url=PROVIDER_URLS[prov], api_key=k),
+            pool.append((OpenAI(base_url=PROVIDER_URLS[prov], api_key=k,
+                                 timeout=LLM_REQUEST_TIMEOUT_S, max_retries=0),
                          model_id, prov))
     return pool
 
@@ -344,6 +376,47 @@ def build_prompt(variant: str, state: dict, history: list, workload_type: str) -
     raise ValueError(f"Unknown variant: {variant}")
 
 # ---------------------------------------------------------------------------
+# Uniform decision deadline -- applies to every controller type identically
+# (HPA, KEDA, RL, LLM), not just LLMs. If a decision isn't back within
+# --decision-timeout seconds, Option B kicks in: keep the current replica
+# count (a no-op, the same fallback already used on outright LLM errors)
+# instead of blocking the control loop indefinitely. Default (None) preserves
+# the existing unbounded-wait behavior, so it never affects already-collected
+# results_richer data -- it's strictly opt-in.
+# ---------------------------------------------------------------------------
+
+# call_llm()'s own retry/backoff loop has no hard cap on total retries, so a
+# single call can genuinely run far longer than any one request's timeout if
+# a provider stays rate-limited. With max_workers=1, one such hung call would
+# occupy the pool's only worker forever, starving every subsequent step's
+# task in the queue (it would never even start). A generous worker count
+# means each step gets its own thread; abandoned ones just idle on socket
+# I/O in the background, which is cheap, rather than blocking new ones.
+_decision_executor = ThreadPoolExecutor(max_workers=16, thread_name_prefix="decision")
+
+
+def decide_with_deadline(fn, timeout_s, fallback):
+    """Run fn() with an optional wall-clock deadline.
+
+    Returns (result, elapsed_ms, timed_out). On timeout, result == fallback.
+    The abandoned call (e.g. a still-in-flight HTTP request) is not
+    cancelled -- Python threads can't be force-killed -- it just keeps
+    running in the background and its eventual result is discarded; the
+    control loop itself is not blocked by it past the deadline.
+    """
+    t0 = time.monotonic()
+    if timeout_s is None:
+        result = fn()
+        return result, (time.monotonic() - t0) * 1000, False
+    future = _decision_executor.submit(fn)
+    try:
+        result = future.result(timeout=timeout_s)
+        return result, (time.monotonic() - t0) * 1000, False
+    except FutureTimeoutError:
+        return fallback, (time.monotonic() - t0) * 1000, True
+
+
+# ---------------------------------------------------------------------------
 # LLM call with robust retry
 # ---------------------------------------------------------------------------
 
@@ -470,7 +543,15 @@ def load_rl_model(algo_name: str, version: str = "v2"):
 
 
 def rl_decision(model, state: dict, ready_replicas: int, version: str = "v2") -> int:
-    max_replicas = 20
+    # Normalize against the REAL runtime cap (REPLICA_MAX, set via
+    # --max-replicas / set_replica_cap), not the 20-replica cap the policy
+    # was trained under. Using a stale 20 here made ready_replicas/max_replicas
+    # under-report fullness at smaller caps (e.g. 14/20=0.7, never reads as
+    # saturated), so the policy kept requesting replica counts above the real
+    # cap; scale_deployment() silently clamped those, but the unclamped value
+    # was still what got compared against the next poll and logged to the
+    # CSV, so the mismatch never resolved and fired a scale_event every step.
+    max_replicas = REPLICA_MAX
     rps = state["rps_target"]
     cpu_raw = state["avg_cpu_m"] / 500.0
     lat_norm = min(state["latency_p90"] / 1000.0, 1.0)
@@ -499,7 +580,7 @@ def rl_decision(model, state: dict, ready_replicas: int, version: str = "v2") ->
         ], dtype=np.float32)
 
     action, _ = model.predict(obs, deterministic=True)
-    return int(action) + 1
+    return max(REPLICA_MIN, min(REPLICA_MAX, int(action) + 1))
 
 # ---------------------------------------------------------------------------
 # Main loop
@@ -621,25 +702,42 @@ def run(args):
                 "step": step,
             }
 
-            tokens, llm_lat = 0, 0.0
-            if args.model == "hpa":
-                new_replicas = hpa_decision(metrics["avg_cpu_m"], ready)
-            elif args.model == "keda":
-                new_replicas = keda_decision(rps_target, ready)
-            elif is_rl:
-                new_replicas = rl_decision(rl_model, state, ready)
-            else:
-                prompt = build_prompt(args.variant, state, history, workload_type)
-                try:
-                    new_replicas, tokens, llm_lat = call_llm(pool, prompt)
-                    errors = 0
-                except Exception as e:
-                    errors += 1
-                    print(f"  Step {step}: LLM error ({errors}): {e}")
-                    new_replicas = ready
-                    if errors >= 10:
-                        print("  Too many non-rate-limit errors, stopping.")
-                        break
+            # Every controller's decision -- HPA/KEDA/RL and LLM alike -- goes
+            # through the same uniform deadline. --decision-timeout (default
+            # None, i.e. today's unbounded-wait behavior) is Option B: if a
+            # decision isn't back in time, keep the current replica count
+            # (a no-op) rather than let the control loop fall further behind
+            # wall-clock. HPA/KEDA/RL never realistically hit this (their
+            # decisions are local, sub-millisecond); it exists so a slow LLM
+            # doesn't get a rule the others are implicitly exempt from.
+            def _decide():
+                if args.model == "hpa":
+                    return hpa_decision(metrics["avg_cpu_m"], ready), 0, 0.0
+                elif args.model == "keda":
+                    return keda_decision(rps_target, ready), 0, 0.0
+                elif is_rl:
+                    return rl_decision(rl_model, state, ready), 0, 0.0
+                else:
+                    prompt = build_prompt(args.variant, state, history, workload_type)
+                    return call_llm(pool, prompt)
+
+            try:
+                (new_replicas, tokens, _), decision_ms, timed_out = decide_with_deadline(
+                    _decide, timeout_s=args.decision_timeout, fallback=(ready, 0, 0.0))
+                llm_lat = decision_ms  # uniform wall-clock decision latency, every controller
+                errors = 0
+                if timed_out:
+                    print(f"  Step {step}: decision timeout after {decision_ms/1000:.1f}s "
+                          f"(budget {args.decision_timeout}s) -- keeping {ready} replicas")
+            except Exception as e:
+                errors += 1
+                timed_out = False
+                print(f"  Step {step}: LLM error ({errors}): {e}")
+                new_replicas = ready
+                tokens, llm_lat = 0, 0.0
+                if errors >= 10:
+                    print("  Too many non-rate-limit errors, stopping.")
+                    break
 
             scale_event = False
             now = time.time()
@@ -665,6 +763,7 @@ def run(args):
                 "llm_tokens": tokens,
                 "llm_latency_ms": llm_lat,
                 "workload_type": workload_type,
+                "decision_timeout": int(timed_out),
             })
             f.flush()
 
@@ -703,6 +802,11 @@ def main():
     parser.add_argument("--deployment-override", type=str, default=None,
                         help="Override deployment/service name from --workload lookup "
                              "(for running a 2nd isolated instance of the same workload)")
+    parser.add_argument("--decision-timeout", type=float, default=None,
+                        help="Max seconds allowed for a single decision, applied uniformly "
+                             "to HPA/KEDA/RL/LLM alike. On timeout, keep the current replica "
+                             "count (Option B) instead of blocking the loop indefinitely. "
+                             "Default None = today's unbounded-wait behavior (unaffected).")
     args = parser.parse_args()
     set_replica_cap(args.max_replicas)
     run(args)
