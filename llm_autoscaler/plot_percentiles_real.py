@@ -33,9 +33,10 @@ MIN_STEPS = 120
 OUT_DIR = "business_case_real"
 
 BASELINE_MODELS = {"hpa": "HPA", "keda": "KEDA", "rl-dqn": "DQN", "rl-ppo": "PPO"}
-CORE_LLM_MODELS = ["llama-8b", "llama-70b", "mistral-small4", "qwen3-80b", "llama4-scout", "deepseek-v4-flash"]
+CORE_LLM_MODELS = ["llama-8b", "llama-70b", "mistral-small4", "qwen3-80b", "llama4-scout", "deepseek-v4-flash", "gpt-oss-120b"]
 DISPLAY = {"llama-8b": "Llama-8B", "llama-70b": "Llama-70B", "mistral-small4": "Mistral",
-           "qwen3-80b": "Qwen-80B", "llama4-scout": "Scout", "deepseek-v4-flash": "DeepSeek"}
+           "qwen3-80b": "Qwen-80B", "llama4-scout": "Scout", "deepseek-v4-flash": "DeepSeek",
+           "gpt-oss-120b": "GPT-OSS-120B"}
 
 # Sequential single-hue ramp (ColorBrewer Blues), light -> dark, one step per
 # percentile magnitude (P50 lightest / smallest -> P99 darkest / largest).
@@ -97,7 +98,20 @@ def load_summary(results_dir, workload_filter):
         label = BASELINE_MODELS.get(model, f"{model}_{variant}")
         rows.append(dict(path=f, workload=workload, model=model, variant=variant,
                           label=label, cls=cls, **r))
-    return pd.DataFrame(rows)
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+    # average across reps (rep1/rep2/rep3 subdirs) so each config is one row,
+    # matching this script's original single-rep assumption.
+    agg = df.groupby(["workload", "model", "variant", "label", "cls"], as_index=False).agg(
+        mean_p50=("mean_p50", "mean"), mean_p90=("mean_p90", "mean"), mean_p99=("mean_p99", "mean"),
+        sla_p50=("sla_p50", "mean"), sla_p90=("sla_p90", "mean"), sla_p99=("sla_p99", "mean"),
+        mean_mean=("mean_mean", "mean"), n_steps=("n_steps", "mean"), n_reps=("path", "count"),
+    )
+    for c in ("mean_p50", "mean_p90", "mean_p99", "sla_p50", "sla_p90", "sla_p99", "mean_mean"):
+        agg[c] = agg[c].round(1)
+    agg["tail_ratio"] = (agg["mean_p99"] / agg["mean_p50"]).round(2)
+    return agg
 
 
 def flat_label(row):

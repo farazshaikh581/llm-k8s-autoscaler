@@ -97,13 +97,21 @@ echo "$(date -u): assigning LLMs to providers..."
 assign llama-8b       nvidia groq
 assign llama-70b      nvidia groq sambanova
 assign mistral-small4 nvidia
-assign qwen3-80b      nvidia
+# gpt-oss-120b REPLACES qwen3-80b in this sweep (Jul 15): same open weights on
+# nvidia/cerebras/groq, nvidia primary (healthy, no deprecation banner).
+assign gpt-oss-120b   nvidia cerebras groq
+# qwen3-80b REMOVED Jul 15: nvidia retires this API 07/27/2026 and its backend
+# already hangs to 504 on every call (llama on the same key answers in <1s).
+# No point burning ~2h of stream time per config on a dead endpoint.
+# assign qwen3-80b      nvidia
 
 env_var_for() {
     case "$1" in
         groq) echo GROQ_API_KEY;; nvidia) echo NVIDIA_API_KEY;;
         cerebras) echo CEREBRAS_API_KEY;; sambanova) echo SAMBANOVA_API_KEY;;
-        google) echo GOOGLE_API_KEY;;
+        google) echo GOOGLE_API_KEY;; novita) echo NOVITA_API_KEY;;
+        dashscope) echo DASHSCOPE_API_KEY;; siliconflow) echo SILICONFLOW_API_KEY;;
+        openrouter) echo OPENROUTER_API_KEY;;
     esac
 }
 
@@ -153,6 +161,17 @@ run_one() {
     if [ "$provider" = "nvidia" ] && [ "$STREAM" = "A" ] && [ -n "${PROVIDER_KEYS[nvidia2]:-}" ]; then
         ev2=("NVIDIA_API_KEY_2=${PROVIDER_KEYS[nvidia2]}")
     fi
+    # pass keys of providers that host the exact same model, so the
+    # autoscaler can fall back to them when every primary key is limited.
+    local fallbacks=""
+    case "$model" in
+        qwen3-80b)    fallbacks="siliconflow openrouter novita dashscope";;
+        gpt-oss-120b) fallbacks="cerebras groq";;
+    esac
+    for fb in $fallbacks; do
+        [ "$fb" = "$provider" ] && continue
+        [ -n "${PROVIDER_KEYS[$fb]:-}" ] && ev2+=("$(env_var_for "$fb")=${PROVIDER_KEYS[$fb]}")
+    done
 
     env "${ev:-DUMMY_KEY}=${PROVIDER_KEYS[$provider]:-}" "${ev2[@]}" \
         $PYTHON "$AUTOSCALER" --workload "$WORKLOAD_ARG" --model "$model" --variant "$variant" \
@@ -175,10 +194,6 @@ run_one() {
 # loop below — this is what COMPLETED is compared against in notifications, so
 # each lane reports progress against its own workload, not the combined one.
 GRAND_TOTAL=0
-n_configs=$(( 2 + ${#RUNS[@]} * 4 ))          # 2 baselines (hpa,keda) + LLM(model x 4 variants)
-for _ in $REPS; do GRAND_TOTAL=$((GRAND_TOTAL + n_configs)); done
-GRAND_TOTAL=$((GRAND_TOTAL * ${#SCENARIOS[@]}))
-
 TOTAL=0
 COMPLETED=0
 _count_idx=0
@@ -188,6 +203,7 @@ for _scen_spec in "${SCENARIOS[@]}"; do
         _outdir="$OUTBASE/$_scen/rep$_rep"
         for _b in hpa keda; do
             _count_idx=$((_count_idx + 1))
+            GRAND_TOTAL=$((GRAND_TOTAL + 1))
             if [ $((_count_idx % 2)) -eq $PARITY ]; then
                 TOTAL=$((TOTAL + 1))
                 is_complete "$_outdir/k8s_${WORKLOAD_ARG}_${_b}_baseline.csv" && COMPLETED=$((COMPLETED + 1))
@@ -197,6 +213,9 @@ for _scen_spec in "${SCENARIOS[@]}"; do
             _model="${_spec%%:*}"
             for _v in $VARIANTS; do
                 _count_idx=$((_count_idx + 1))
+                # wiki llama-8b belongs to the groq offload lane; not ours
+                if [ "$_scen" = "wiki_diurnal" ] && [ "$_model" = "llama-8b" ]; then continue; fi
+                GRAND_TOTAL=$((GRAND_TOTAL + 1))
                 if [ $((_count_idx % 2)) -eq $PARITY ]; then
                     TOTAL=$((TOTAL + 1))
                     is_complete "$_outdir/k8s_${WORKLOAD_ARG}_${_model}_${_v}.csv" && COMPLETED=$((COMPLETED + 1))
@@ -210,6 +229,34 @@ unset _count_idx _scen_spec _scen _rep _outdir _b _spec _model _v
 echo "$(date -u): [$STREAM] resuming at $COMPLETED/$TOTAL already complete this lane ($GRAND_TOTAL grand total, $STEPS steps x ${INTERVAL}s = $((STEPS*INTERVAL/60))min each, sequential)"
 echo "$(date -u): rough wall-clock ~$((TOTAL * STEPS * INTERVAL / 3600)) h for this lane"
 notify "Richer real-cluster sweep resumed: $COMPLETED/$TOTAL already done this lane ($GRAND_TOTAL grand total, N=3, ${STEPS}-step, max-rep $MAX_REPLICAS, cpu+wiki)"
+
+# ---- priority pass: mistral-small4 x wiki_diurnal FIRST ----
+# nvidia retires the mistral-small4 API on 07/27/2026 (same date as qwen3-80b,
+# whose backend is already dead). These 12 runs are the only remaining
+# mistral-small4 configs, so grab them before the regular sweep order reaches
+# them. Walks the exact same enumeration and parity as the main loop below, so
+# every config keeps its usual stream owner and the two streams stay disjoint;
+# the main loop skips whatever this pass completed via is_complete.
+echo "$(date -u): ===== PRIORITY PASS: mistral-small4 x wiki_diurnal ====="
+PIDX=0
+for scen_spec in "${SCENARIOS[@]}"; do
+    scen="${scen_spec%%:*}"; trace="${scen_spec#*:}"
+    for rep in $REPS; do
+        for b in hpa keda; do
+            PIDX=$((PIDX + 1))
+        done
+        for spec in "${RUNS[@]}"; do
+            model="${spec%%:*}"; provider="${spec##*:}"
+            for v in $VARIANTS; do
+                PIDX=$((PIDX + 1))
+                if [ "$scen" = "wiki_diurnal" ] && [ "$model" = "mistral-small4" ]; then
+                    [ $((PIDX % 2)) -ne $PARITY ] && continue
+                    run_one "$scen" "$trace" "$rep" "$model" "$v" "$provider" || true
+                fi
+            done
+        done
+    done
+done
 
 # ---- main: scenarios x reps x configs ----
 # STREAM A and STREAM B iterate this identical deterministic order and each only
@@ -235,6 +282,10 @@ for scen_spec in "${SCENARIOS[@]}"; do
             model="${spec%%:*}"; provider="${spec##*:}"
             for v in $VARIANTS; do
                 IDX=$((IDX + 1))
+                # wiki llama-8b belongs to the groq offload lane
+                # (run_altprovider_lane.sh, still live) — never touch it here,
+                # or the two could write the same CSV (lane D incident)
+                if [ "$scen" = "wiki_diurnal" ] && [ "$model" = "llama-8b" ]; then continue; fi
                 [ $((IDX % 2)) -ne $PARITY ] && continue
                 run_one "$scen" "$trace" "$rep" "$model" "$v" "$provider" || true
             done

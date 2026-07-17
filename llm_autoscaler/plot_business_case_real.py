@@ -32,9 +32,9 @@ MIN_STEPS = 120            # only complete runs
 OUT_DIR = "business_case_real"
 
 BASELINE_MODELS = {"hpa": "HPA", "keda": "KEDA", "rl-dqn": "DQN", "rl-ppo": "PPO"}
-CORE_LLM_MODELS = ["llama-8b", "llama-70b", "mistral-small4", "qwen3-80b", "llama4-scout"]
+CORE_LLM_MODELS = ["llama-8b", "llama-70b", "mistral-small4", "qwen3-80b", "llama4-scout", "gpt-oss-120b"]
 DISPLAY = {"llama-8b": "Llama-8B", "llama-70b": "Llama-70B", "mistral-small4": "Mistral",
-           "qwen3-80b": "Qwen-80B", "llama4-scout": "Scout"}
+           "qwen3-80b": "Qwen-80B", "llama4-scout": "Scout", "gpt-oss-120b": "GPT-OSS-120B"}
 
 # Okabe-Ito, colorblind-safe — same palette as plot_business_case.py (sim) for
 # visual consistency; the REAL CLUSTER tag on every figure is what disambiguates.
@@ -109,7 +109,21 @@ def load_summary(results_dir, workload_filter):
             cost_vcpu_h=round(r["vcpu_hours"], 2), cost_usd=round(annualize(r["vcpu_hours"], r["run_hours"])),
             scales=r["scales"], run_hours=round(r["run_hours"], 2), n_steps=r["n_steps"],
         ))
-    return pd.DataFrame(rows)
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+    # average across reps (rep1/rep2/rep3 subdirs) so each config is one row,
+    # matching this script's original single-rep assumption.
+    agg = df.groupby(["workload", "model", "variant", "label", "cls"], as_index=False).agg(
+        lat_sla=("lat_sla", "mean"), mean_lat=("mean_lat", "mean"),
+        cost_vcpu_h=("cost_vcpu_h", "mean"), cost_usd=("cost_usd", "mean"),
+        scales=("scales", "mean"), run_hours=("run_hours", "mean"), n_steps=("n_steps", "mean"),
+        n_reps=("path", "count"),
+    )
+    for c in ("lat_sla", "mean_lat", "cost_vcpu_h", "scales"):
+        agg[c] = agg[c].round(1)
+    agg["cost_usd"] = agg["cost_usd"].round()
+    return agg
 
 
 def flat_label(row):

@@ -160,6 +160,10 @@ PROVIDER_MODEL_IDS = {
     },
     "qwen3-80b": {
         "nvidia": "qwen/qwen3-next-80b-a3b-instruct",
+        "siliconflow": "Qwen/Qwen3-Next-80B-A3B-Instruct",
+        "openrouter": "qwen/qwen3-next-80b-a3b-instruct:free",
+        "novita": "qwen/qwen3-next-80b-a3b-instruct",
+        "dashscope": "qwen3-next-80b-a3b-instruct",
     },
 }
 
@@ -174,6 +178,10 @@ PROVIDER_URLS = {
     "nvidia": "https://integrate.api.nvidia.com/v1",
     "google": "https://generativelanguage.googleapis.com/v1beta/openai/",
     "github": "https://models.inference.ai.azure.com",
+    "novita": "https://api.novita.ai/openai",
+    "dashscope": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+    "siliconflow": "https://api.siliconflow.com/v1",
+    "openrouter": "https://openrouter.ai/api/v1",
 }
 
 PROVIDER_ENV_VARS = {
@@ -183,6 +191,10 @@ PROVIDER_ENV_VARS = {
     "nvidia": "NVIDIA_API_KEY",
     "google": "GOOGLE_API_KEY",
     "github": "GITHUB_API_KEY",
+    "novita": "NOVITA_API_KEY",
+    "dashscope": "DASHSCOPE_API_KEY",
+    "siliconflow": "SILICONFLOW_API_KEY",
+    "openrouter": "OPENROUTER_API_KEY",
 }
 
 
