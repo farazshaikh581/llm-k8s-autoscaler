@@ -7,8 +7,9 @@ Infrastructure model:
     max 20 replicas, node scheduling enforced by CPU request
   - Startup delay: new replicas take 30s (~0.5 step) to become ready
   - Scale cooldown: 60s (1 step) between scale events (matches real HPA)
-  - Queueing: M/M/c/K with finite per-pod buffers (real losses) and
-    requests/limits-aware service rates under CFS throttling; latency P90
+  - Queueing: c parallel per-pod M/M/1/K queues (no shared queue, matching
+    k8s Service load-balancing), finite TCP listen backlogs for real losses,
+    and requests/limits-aware service rates under CFS throttling; latency P90
     from the exact waiting-time mixture, calibrated on the real testbed
     (see the queueing-model section for the measured constants)
   - Cost tracked in vCPU-minutes of reserved capacity (requests)
