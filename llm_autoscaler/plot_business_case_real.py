@@ -44,6 +44,7 @@ MUTED = "#888888"
 GRID = "#DDDDDD"
 SOURCE_TAG = "REAL K8S CLUSTER — measured, not simulated"
 TAG_COLOR = "#CC3311"  # red-orange: visually distinct from the sim tag's blue
+SCENARIO_LABELS = {"cpu_bursty": "CPU-bursty trace", "wiki_diurnal": "Wikipedia-diurnal trace"}
 
 plt.rcParams.update({
     "font.size": 11, "axes.edgecolor": MUTED, "axes.linewidth": 0.8,
@@ -95,6 +96,9 @@ def annualize(vcpu_hours, run_hours):
 def load_summary(results_dir, workload_filter):
     rows = []
     for f in sorted(glob.glob(os.path.join(results_dir, "**", "k8s_*.csv"), recursive=True)):
+        top = os.path.relpath(f, results_dir).split(os.sep)[0]
+        if top.startswith("_"):
+            continue  # archived/buggy runs, e.g. _buggy_*, _dropped_*
         workload, model, variant = parse_name(f)
         if workload_filter and workload != workload_filter:
             continue
@@ -214,21 +218,31 @@ def fig_latency_cost(rep, source_label, suffix=""):
 def fig_cost_stability(s, rep, source_label, suffix=""):
     core = s[(s.model.isin(CORE_LLM_MODELS) | s.model.isin(BASELINE_MODELS))]
     label_runs = set(rep.index)
-    fig, ax = plt.subplots(figsize=(9.5, 6.5))
+    fig, ax = plt.subplots(figsize=(11, 7.5))
+    texts = []
     for _, r in core.iterrows():
         marker = "*" if r.cls == "LLM" else ("s" if r.cls in ("HPA", "KEDA") else "D")
         sz = 340 if marker == "*" else 150
         ax.scatter(r.cost_usd, r.scales, s=sz, c=COLORS.get(r.cls, COLORS["LLM"]), marker=marker,
                    edgecolors="white", linewidths=0.9, zorder=3, alpha=0.92)
-        ax.annotate(flat_label(r), (r.cost_usd, r.scales), fontsize=7.5, color=INK,
-                    xytext=(6, 4), textcoords="offset points")
+        texts.append(ax.text(r.cost_usd, r.scales, flat_label(r), fontsize=8, color=INK))
 
     hpa_rows = rep[rep.model == "hpa"]
     if not hpa_rows.empty:
         hpa = hpa_rows.iloc[0]
         ax.axvline(hpa.cost_usd, color=COLORS["HPA"], ls="--", lw=1, zorder=1)
-        ax.text(hpa.cost_usd, ax.get_ylim()[1] * 0.02, " HPA cost", color=COLORS["HPA"],
-                fontsize=8, ha="left", va="bottom")
+        texts.append(ax.text(hpa.cost_usd, ax.get_ylim()[1] * 0.02, " HPA cost", color=COLORS["HPA"],
+                              fontsize=8, ha="left", va="bottom"))
+
+    # Many configs land close together on cost and scale count, so plain offset
+    # labels overlap into an unreadable block. adjustText spreads them out and
+    # draws a thin leader line back to the point they belong to.
+    try:
+        from adjustText import adjust_text
+        adjust_text(texts, ax=ax, expand=(1.3, 1.6),
+                    arrowprops=dict(arrowstyle="-", color=MUTED, lw=0.6))
+    except ImportError:
+        pass
 
     ax.set_xlabel("Annualized infra cost (USD / service)  → cheaper is left")
     ax.set_ylabel("Scaling actions over the run  → more stable is down")
@@ -306,6 +320,10 @@ def main():
     ap.add_argument("--workload", default="cpu", help="cpu, io, or '' for all")
     ap.add_argument("--out", default=None, help="CSV output path (default: <results-dir>_business_case.csv)")
     ap.add_argument("--no-plots", action="store_true", help="skip figure generation, table + verdict only")
+    ap.add_argument("--tag", default=None,
+                     help="figure filename suffix (default: workload); set this when "
+                          "--results-dir points at one scenario, since the workload token "
+                          "in these filenames is always 'cpu' for both cpu_bursty and wiki_diurnal")
     args = ap.parse_args()
 
     s = load_summary(args.results_dir, args.workload or None)
@@ -321,8 +339,9 @@ def main():
     two_regime_verdict(s)
 
     if not args.no_plots:
-        source_label = f"{args.results_dir}, {args.workload or 'all'} workload"
-        suffix = f"_{args.workload}" if args.workload else ""
+        tag = args.tag or args.workload
+        source_label = SCENARIO_LABELS.get(tag, f"{args.results_dir}, {args.workload or 'all'} workload")
+        suffix = f"_{tag}" if tag else ""
         rep = pick_representative(s)
         fig_latency_cost(rep, source_label, suffix)
         fig_cost_stability(s, rep, source_label, suffix)

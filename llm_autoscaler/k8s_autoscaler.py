@@ -420,7 +420,7 @@ def decide_with_deadline(fn, timeout_s, fallback):
 # LLM call with robust retry
 # ---------------------------------------------------------------------------
 
-def call_llm(pool, prompt: str) -> tuple[int, int, float]:
+def call_llm(pool, prompt: str) -> tuple[int | None, int, float]:
     # `pool` is a list of (client, model_id, provider) entries. On a rate or
     # daily limit we rotate to the next entry immediately and only back off
     # once every entry in the pool is limited. Fallback-provider entries sit
@@ -442,7 +442,12 @@ def call_llm(pool, prompt: str) -> tuple[int, int, float]:
                     {"role": "user", "content": prompt},
                 ],
                 temperature=0.0,
-                max_tokens=512,
+                # 1536 gives reasoning models (e.g. gpt-oss-120b, which spends
+                # completion tokens on a separate reasoning_content field
+                # before ever writing the answer) enough room to finish under
+                # a real overload state -- 512 measured finish_reason="length"
+                # with content=None on exactly this kind of prompt.
+                max_tokens=1536,
             )
             latency_ms = round((time.time() - t0) * 1000, 1)
 
@@ -454,9 +459,16 @@ def call_llm(pool, prompt: str) -> tuple[int, int, float]:
                 replicas = int(match.group(1))
             else:
                 nums = re.findall(r'\b(\d+)\b', content)
-                replicas = int(nums[-1]) if nums else -1
+                # No parseable number at all (e.g. still-truncated content) --
+                # signal "no decision" so the caller holds the current
+                # replica count, instead of quietly clamping to REPLICA_MIN
+                # and forcing a scale-to-minimum right when the state that
+                # broke parsing is often the one under real load.
+                replicas = int(nums[-1]) if nums else None
 
             call_llm._idx = idx  # remember the working entry for next step
+            if replicas is None:
+                return None, tokens, latency_ms
             return max(REPLICA_MIN, min(REPLICA_MAX, replicas)), tokens, latency_ms
 
         except Exception as e:
@@ -729,6 +741,9 @@ def run(args):
                 if timed_out:
                     print(f"  Step {step}: decision timeout after {decision_ms/1000:.1f}s "
                           f"(budget {args.decision_timeout}s) -- keeping {ready} replicas")
+                if new_replicas is None:
+                    print(f"  Step {step}: LLM response unparseable -- keeping {ready} replicas")
+                    new_replicas = ready
             except Exception as e:
                 errors += 1
                 timed_out = False

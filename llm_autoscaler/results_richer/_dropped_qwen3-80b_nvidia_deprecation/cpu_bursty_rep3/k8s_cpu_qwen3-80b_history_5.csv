@@ -1,0 +1,13 @@
+step,timestamp,replicas,ready_replicas,cpu_millicores,memory_mib,rps_target,latency_p90_ms,success_rate,llm_decision,scale_event,llm_model,llm_variant,llm_tokens,llm_latency_ms,workload_type
+0,2026-07-15 14:57:29,3,3,3,33,292,5.7,1.0,3,0,qwen3-80b,history_5,0,0.0,CPU-intensive
+1,2026-07-15 15:13:37,3,3,18,33,259,5.3,1.0,3,0,qwen3-80b,history_5,0,0.0,CPU-intensive
+2,2026-07-15 15:29:45,3,3,11,33,200,5.4,1.0,3,0,qwen3-80b,history_5,265,851758.9,CPU-intensive
+3,2026-07-15 15:44:57,3,3,9,33,205,6.3,1.0,3,0,qwen3-80b,history_5,0,0.0,CPU-intensive
+4,2026-07-15 16:01:05,3,3,17,33,222,6.5,1.0,3,0,qwen3-80b,history_5,0,0.0,CPU-intensive
+5,2026-07-15 16:17:13,3,3,49,33,286,5.3,1.0,3,0,qwen3-80b,history_5,0,0.0,CPU-intensive
+6,2026-07-15 16:33:20,3,3,38,33,575,5.6,1.0,3,0,qwen3-80b,history_5,0,0.0,CPU-intensive
+7,2026-07-15 16:49:28,3,3,18,33,776,5.6,1.0,3,0,qwen3-80b,history_5,0,0.0,CPU-intensive
+8,2026-07-15 17:05:36,3,3,3,33,746,5.5,1.0,3,0,qwen3-80b,history_5,0,0.0,CPU-intensive
+9,2026-07-15 17:21:44,3,3,3,33,639,5.4,1.0,3,0,qwen3-80b,history_5,0,0.0,CPU-intensive
+10,2026-07-15 17:37:52,3,3,3,34,727,5.4,1.0,3,0,qwen3-80b,history_5,0,0.0,CPU-intensive
+11,2026-07-15 17:54:00,3,3,3,33,686,5.3,1.0,3,0,qwen3-80b,history_5,0,0.0,CPU-intensive

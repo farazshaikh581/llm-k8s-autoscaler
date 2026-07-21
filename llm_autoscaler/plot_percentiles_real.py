@@ -46,6 +46,7 @@ MUTED = "#888888"
 GRID = "#DDDDDD"
 SOURCE_TAG = "REAL K8S CLUSTER — measured, not simulated"
 TAG_COLOR = "#CC3311"
+SCENARIO_LABELS = {"cpu_bursty": "CPU-bursty trace", "wiki_diurnal": "Wikipedia-diurnal trace"}
 
 plt.rcParams.update({
     "font.size": 11, "axes.edgecolor": MUTED, "axes.linewidth": 0.8,
@@ -88,6 +89,9 @@ def load_run(path):
 def load_summary(results_dir, workload_filter):
     rows = []
     for f in sorted(glob.glob(os.path.join(results_dir, "**", "load_*.csv"), recursive=True)):
+        top = os.path.relpath(f, results_dir).split(os.sep)[0]
+        if top.startswith("_"):
+            continue  # archived/buggy runs, e.g. _buggy_*, _dropped_*
         workload, model, variant = parse_name(f, "load_")
         if workload_filter and workload != workload_filter:
             continue
@@ -207,6 +211,10 @@ def main():
     ap.add_argument("--workload", default="cpu")
     ap.add_argument("--out", default=None)
     ap.add_argument("--no-plots", action="store_true")
+    ap.add_argument("--tag", default=None,
+                     help="figure filename suffix (default: workload); set this when "
+                          "--results-dir points at one scenario, since the workload token "
+                          "in these filenames is always 'cpu' for both cpu_bursty and wiki_diurnal")
     args = ap.parse_args()
 
     s = load_summary(args.results_dir, args.workload or None)
@@ -220,8 +228,9 @@ def main():
     print_table(s)
 
     if not args.no_plots:
-        source_label = f"{args.results_dir}, {args.workload or 'all'} workload"
-        suffix = f"_{args.workload}" if args.workload else ""
+        tag = args.tag or args.workload
+        source_label = SCENARIO_LABELS.get(tag, f"{args.results_dir}, {args.workload or 'all'} workload")
+        suffix = f"_{tag}" if tag else ""
         fig_ladder(s, source_label, suffix)
         fig_tail_ratio(s, source_label, suffix)
 
