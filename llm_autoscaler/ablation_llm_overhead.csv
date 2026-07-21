@@ -1,6 +1,5 @@
 model,latency_now_s,latency_if_local_s,reduction_s,reduction_pct
 Mistral-Small,1.8,0.5,1.3,72.0
 Llama-8B,2.2,0.6,1.6,74.0
-GPT-OSS-120B,14.3,0.6,13.7,96.0
+GPT-OSS-120B,11.5,0.5,11.0,95.0
 Llama-70B,52.2,26.0,26.3,50.0
-Qwen3-80B,143.3,80.4,62.9,44.0
